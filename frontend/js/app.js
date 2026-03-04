@@ -8,11 +8,11 @@ const state = {
     algorithms: [], selectedAlgorithm: null, currentParams: {},
     viewMode: 'split',
     // Calibration
-    calMode: 'line', // 'line' or 'manual'
-    calPoints: [], // [{x, y}, {x, y}]
+    calMode: 'auto', // 'auto' or 'manual'
     isCalibrating: false,
     calibrated: false,
     pixelsPerMm: 1.0,
+    detectedEdges: null, // {top_y, bottom_y, click_x, pixel_distance}
     // Measurement
     measureParams: {
         min_section_width_px: 20, gradient_threshold: 2.0,
@@ -50,12 +50,12 @@ function cacheDom() {
     // Calibration
     DOM.calibrationBadge = document.getElementById('calibration-badge');
     DOM.calibrationStatus = document.getElementById('calibration-status');
-    DOM.calModeLine = document.getElementById('cal-mode-line');
+    DOM.calModeAuto = document.getElementById('cal-mode-auto');
     DOM.calModeManual = document.getElementById('cal-mode-manual');
-    DOM.calLineSection = document.getElementById('cal-line-section');
+    DOM.calAutoSection = document.getElementById('cal-auto-section');
     DOM.calManualSection = document.getElementById('cal-manual-section');
-    DOM.calPoint1 = document.getElementById('cal-point1');
-    DOM.calPoint2 = document.getElementById('cal-point2');
+    DOM.calTopEdge = document.getElementById('cal-top-edge');
+    DOM.calBottomEdge = document.getElementById('cal-bottom-edge');
     DOM.calDistance = document.getElementById('cal-distance');
     DOM.calReferenceMm = document.getElementById('cal-reference-mm');
     DOM.btnCalibrate = document.getElementById('btn-calibrate');
@@ -89,6 +89,11 @@ const API = {
     async processImage(imageId, algorithm, params) {
         const r = await fetch('/api/process', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_id: imageId, algorithm, params }) });
         if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'İşleme başarısız'); }
+        return r.json();
+    },
+    async detectEdges(data) {
+        const r = await fetch('/api/detect-edges', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Kenar tespiti başarısız'); }
         return r.json();
     },
     async calibrate(data) {
@@ -152,8 +157,8 @@ function setupTabs() {
             btn.classList.add('active');
             document.getElementById(btn.dataset.tab).classList.add('active');
 
-            // Kalibrasyon tabına geçince calibrating mode
-            if (btn.dataset.tab === 'tab-calibration' && state.calMode === 'line') {
+            // Kalibrasyon tabı → calibrating mode aç
+            if (btn.dataset.tab === 'tab-calibration' && state.calMode === 'auto') {
                 state.isCalibrating = true;
                 DOM.originalPanel.classList.add('calibrating');
             } else {
@@ -183,7 +188,6 @@ function selectAlgorithm(algo) {
     document.querySelectorAll('.algo-item').forEach(el => el.classList.toggle('active', el.dataset.name === algo.name));
     DOM.activeAlgoTitle.innerHTML = `${algo.display_name} <span class="algo-badge">${algo.params.length} parametre</span>`;
     renderParams(algo.params);
-    // Ölçüm tablosunu gizle
     DOM.measureTablePanel.classList.add('hidden');
     DOM.measureTablePanel.classList.remove('visible');
     if (state.imageId) applyAlgorithm();
@@ -240,9 +244,9 @@ async function handleFile(file) {
         DOM.imageInfoText.textContent = `${r.width}×${r.height} • ${r.size_kb} KB`;
         DOM.originalImage.src = r.url; DOM.processedImage.src = r.url;
         showImagePanels();
-        // Reset calibration points
-        state.calPoints = [];
-        updateCalPointsDisplay();
+        // Reset edges
+        state.detectedEdges = null;
+        resetEdgeDisplay();
         showToast(`${r.filename} yüklendi`, 'success');
         if (state.selectedAlgorithm) await applyAlgorithm();
     } catch (err) { showToast(err.message, 'error'); }
@@ -266,43 +270,44 @@ async function applyAlgorithm() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Calibration
+// Calibration — Otomatik Kenar Tespiti
 // ═══════════════════════════════════════════════════════════════
 function setupCalibration() {
-    // Mode toggle
-    DOM.calModeLine.addEventListener('click', () => {
-        state.calMode = 'line'; state.isCalibrating = true;
-        DOM.calModeLine.classList.add('active'); DOM.calModeManual.classList.remove('active');
-        DOM.calLineSection.classList.remove('hidden'); DOM.calManualSection.classList.add('hidden');
+    // Mode toggle — Auto vs Manual
+    DOM.calModeAuto.addEventListener('click', () => {
+        state.calMode = 'auto'; state.isCalibrating = true;
+        DOM.calModeAuto.classList.add('active'); DOM.calModeManual.classList.remove('active');
+        DOM.calAutoSection.classList.remove('hidden'); DOM.calManualSection.classList.add('hidden');
         DOM.originalPanel.classList.add('calibrating');
     });
     DOM.calModeManual.addEventListener('click', () => {
         state.calMode = 'manual'; state.isCalibrating = false;
-        DOM.calModeManual.classList.add('active'); DOM.calModeLine.classList.remove('active');
-        DOM.calManualSection.classList.remove('hidden'); DOM.calLineSection.classList.add('hidden');
+        DOM.calModeManual.classList.add('active'); DOM.calModeAuto.classList.remove('active');
+        DOM.calManualSection.classList.remove('hidden'); DOM.calAutoSection.classList.add('hidden');
         DOM.originalPanel.classList.remove('calibrating');
     });
 
-    // Image click for calibration points
-    DOM.originalImage.addEventListener('click', handleCalibrationClick);
+    // Tek tıklama ile kenar tespiti
+    DOM.originalImage.addEventListener('click', handleAutoEdgeClick);
 
-    // Calibrate button
+    // Kalibre Et butonu
     DOM.btnCalibrate.addEventListener('click', async () => {
         const mm = parseFloat(DOM.calReferenceMm.value);
         if (!mm || mm <= 0) { showToast('Geçerli bir mm değeri girin', 'warning'); return; }
-        if (state.calPoints.length < 2) { showToast('İki nokta seçin', 'warning'); return; }
+        if (!state.detectedEdges) { showToast('Önce parçanın üzerine tıklayın', 'warning'); return; }
         try {
+            const edges = state.detectedEdges;
             const r = await API.calibrate({
                 reference_mm: mm,
-                x1: state.calPoints[0].x, y1: state.calPoints[0].y,
-                x2: state.calPoints[1].x, y2: state.calPoints[1].y,
+                x1: edges.click_x, y1: edges.top_y,
+                x2: edges.click_x, y2: edges.bottom_y,
             });
             setCalibrationResult(r.pixels_per_mm);
             showToast(`Kalibrasyon tamamlandı: ${r.pixels_per_mm.toFixed(2)} px/mm`, 'success');
         } catch (err) { showToast(err.message, 'error'); }
     });
 
-    // Manual calibrate
+    // Manuel kalibrasyon
     DOM.btnCalibrateManual.addEventListener('click', async () => {
         const ppmm = parseFloat(DOM.calManualPpmm.value);
         if (!ppmm || ppmm <= 0) { showToast('Geçerli bir px/mm değeri girin', 'warning'); return; }
@@ -314,39 +319,49 @@ function setupCalibration() {
     });
 }
 
-function handleCalibrationClick(e) {
-    if (!state.isCalibrating) return;
-    // Görüntü üzerindeki gerçek koordinatları hesapla
+async function handleAutoEdgeClick(e) {
+    if (!state.isCalibrating || !state.imageId) return;
+
     const img = DOM.originalImage;
     const rect = img.getBoundingClientRect();
     const scaleX = img.naturalWidth / rect.width;
     const scaleY = img.naturalHeight / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
+    const clickX = Math.round((e.clientX - rect.left) * scaleX);
+    const clickY = Math.round((e.clientY - rect.top) * scaleY);
 
-    if (state.calPoints.length >= 2) state.calPoints = []; // Reset if already 2
-    state.calPoints.push({ x: Math.round(x), y: Math.round(y) });
-    updateCalPointsDisplay();
+    showLoading(true);
+    try {
+        const r = await API.detectEdges({
+            image_id: state.imageId,
+            click_x: clickX,
+            click_y: clickY,
+        });
+        state.detectedEdges = r;
+
+        // Overlay görüntüsünü göster (kenar çizgileri)
+        DOM.processedImage.src = r.overlay_image;
+        DOM.activeAlgoTitle.innerHTML = 'Kenar Tespiti <span class="algo-badge">kalibrasyon</span>';
+        showImagePanels();
+
+        // Paneli güncelle
+        DOM.calTopEdge.textContent = `x=${r.click_x}, y=${r.top_y}`;
+        DOM.calBottomEdge.textContent = `x=${r.click_x}, y=${r.bottom_y}`;
+        DOM.calDistance.textContent = `${r.pixel_distance} px`;
+        DOM.btnCalibrate.disabled = false;
+
+        showToast(`Kenarlar tespit edildi: ${r.pixel_distance} px`, 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        showLoading(false);
+    }
 }
 
-function updateCalPointsDisplay() {
-    if (state.calPoints.length >= 1) {
-        DOM.calPoint1.textContent = `(${state.calPoints[0].x}, ${state.calPoints[0].y})`;
-    } else {
-        DOM.calPoint1.textContent = '—';
-    }
-    if (state.calPoints.length >= 2) {
-        DOM.calPoint2.textContent = `(${state.calPoints[1].x}, ${state.calPoints[1].y})`;
-        const dx = state.calPoints[1].x - state.calPoints[0].x;
-        const dy = state.calPoints[1].y - state.calPoints[0].y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        DOM.calDistance.textContent = `${dist.toFixed(1)} px`;
-        DOM.btnCalibrate.disabled = false;
-    } else {
-        DOM.calPoint2.textContent = '—';
-        DOM.calDistance.textContent = '— px';
-        DOM.btnCalibrate.disabled = true;
-    }
+function resetEdgeDisplay() {
+    DOM.calTopEdge.textContent = '—';
+    DOM.calBottomEdge.textContent = '—';
+    DOM.calDistance.textContent = '— px';
+    DOM.btnCalibrate.disabled = true;
 }
 
 function setCalibrationResult(ppmm) {

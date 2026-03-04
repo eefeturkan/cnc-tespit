@@ -96,6 +96,14 @@ class ManualCalibrationRequest(BaseModel):
     profile_name: Optional[str] = None
 
 
+class EdgeDetectRequest(BaseModel):
+    image_id: str
+    click_x: float
+    click_y: float
+    blur_ksize: int = 5
+    morph_ksize: int = 5
+
+
 # ---------------------------------------------------------------------------
 # Yardımcı
 # ---------------------------------------------------------------------------
@@ -195,8 +203,82 @@ async def get_image_info(image_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Faz 2 Endpoint'ler — Kalibrasyon
+# Faz 2 Endpoint'ler — Kenar Tespiti + Kalibrasyon
 # ---------------------------------------------------------------------------
+@app.post("/api/detect-edges")
+async def detect_edges(request: EdgeDetectRequest):
+    """
+    Tıklanan x koordinatında parçanın üst ve alt kenarını otomatik tespit et.
+    Kullanıcı tek tıklar → sistem kenarları bulur → kalibrasyon için kullanılır.
+    """
+    img = _load_image(request.image_id)
+    h, w = img.shape[:2]
+    click_x = int(round(request.click_x))
+    click_y = int(round(request.click_y))
+
+    if click_x < 0 or click_x >= w:
+        raise HTTPException(status_code=400, detail=f"x koordinatı görüntü dışında: {click_x}")
+
+    # Gri tonlama
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img.copy()
+
+    # Blur + Otsu threshold
+    bk = request.blur_ksize if request.blur_ksize % 2 == 1 else request.blur_ksize + 1
+    blurred = cv2.GaussianBlur(gray, (bk, bk), 0)
+    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # Morfolojik temizleme
+    mk = request.morph_ksize if request.morph_ksize % 2 == 1 else request.morph_ksize + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    # Tıklanan x kolonundaki beyaz pikselleri bul
+    col = binary[:, click_x]
+    white_pixels = np.where(col > 0)[0]
+
+    if len(white_pixels) == 0:
+        # Yakın kolonlarda da ara (±20 piksel)
+        for offset in range(1, 21):
+            for dx in [click_x - offset, click_x + offset]:
+                if 0 <= dx < w:
+                    col = binary[:, dx]
+                    white_pixels = np.where(col > 0)[0]
+                    if len(white_pixels) > 0:
+                        click_x = dx
+                        break
+            if len(white_pixels) > 0:
+                break
+
+    if len(white_pixels) == 0:
+        raise HTTPException(status_code=400, detail="Bu noktada parça kenarı tespit edilemedi. Farklı bir nokta deneyin.")
+
+    top_y = int(white_pixels[0])
+    bottom_y = int(white_pixels[-1])
+    pixel_distance = bottom_y - top_y
+
+    # Overlay görüntüsü oluştur — kenar çizgilerini göster
+    overlay = img.copy()
+    # Dikey ölçüm çizgisi (kırmızı)
+    cv2.line(overlay, (click_x, top_y), (click_x, bottom_y), (0, 0, 255), 2)
+    # Üst/alt kenar işaretleri (yeşil yatay çizgi)
+    cv2.line(overlay, (click_x - 20, top_y), (click_x + 20, top_y), (0, 255, 0), 2)
+    cv2.line(overlay, (click_x - 20, bottom_y), (click_x + 20, bottom_y), (0, 255, 0), 2)
+    # Ok uçları
+    cv2.arrowedLine(overlay, (click_x, (top_y + bottom_y) // 2), (click_x, top_y), (0, 0, 255), 2, tipLength=0.03)
+    cv2.arrowedLine(overlay, (click_x, (top_y + bottom_y) // 2), (click_x, bottom_y), (0, 0, 255), 2, tipLength=0.03)
+    # Piksel mesafesi etiketi
+    cv2.putText(overlay, f"{pixel_distance} px", (click_x + 10, (top_y + bottom_y) // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2, cv2.LINE_AA)
+
+    return {
+        "top_y": top_y,
+        "bottom_y": bottom_y,
+        "click_x": click_x,
+        "pixel_distance": pixel_distance,
+        "overlay_image": f"data:image/png;base64,{_image_to_base64(overlay)}",
+    }
+
 @app.post("/api/calibrate")
 async def calibrate(request: CalibrateRequest):
     """İki nokta + bilinen ölçüden kalibrasyon hesapla."""

@@ -116,33 +116,33 @@
                     <div class="sidebar-section">
                         <div class="sidebar-section-header">Kalibrasyon Ayarları</div>
                         <div class="calibration-panel">
-                            <p class="cal-hint">Görüntü üzerinde bilinen ölçüdeki iki noktayı seçin, ardından gerçek
-                                değeri mm olarak girin.</p>
+                            <p class="cal-hint">Parçanın üzerine tıklayın — üst ve alt kenarlar otomatik tespit edilir.
+                                Sonra gerçek çap değerini mm olarak girin.</p>
 
                             <div class="cal-mode-toggle">
-                                <button class="cal-mode-btn active" data-mode="line" id="cal-mode-line">📏 Çizgi
-                                    Çiz</button>
+                                <button class="cal-mode-btn active" data-mode="auto" id="cal-mode-auto">🎯 Otomatik
+                                    Kenar</button>
                                 <button class="cal-mode-btn" data-mode="manual" id="cal-mode-manual">⌨️ Manuel</button>
                             </div>
 
-                            <!-- Çizgi modu -->
-                            <div class="cal-line-section" id="cal-line-section">
+                            <!-- Otomatik kenar tespiti modu -->
+                            <div class="cal-line-section" id="cal-auto-section">
                                 <div class="cal-points-display">
                                     <div class="cal-point">
-                                        <span class="cal-point-label">Nokta 1:</span>
-                                        <span class="cal-point-value" id="cal-point1">—</span>
+                                        <span class="cal-point-label">Üst Kenar:</span>
+                                        <span class="cal-point-value" id="cal-top-edge">—</span>
                                     </div>
                                     <div class="cal-point">
-                                        <span class="cal-point-label">Nokta 2:</span>
-                                        <span class="cal-point-value" id="cal-point2">—</span>
+                                        <span class="cal-point-label">Alt Kenar:</span>
+                                        <span class="cal-point-value" id="cal-bottom-edge">—</span>
                                     </div>
                                     <div class="cal-point">
-                                        <span class="cal-point-label">Mesafe:</span>
-                                        <span class="cal-point-value" id="cal-distance">— px</span>
+                                        <span class="cal-point-label">Çap (px):</span>
+                                        <span class="cal-point-value cal-highlight" id="cal-distance">— px</span>
                                     </div>
                                 </div>
                                 <div class="param-group">
-                                    <label class="param-label">Gerçek Ölçü (mm)</label>
+                                    <label class="param-label">Gerçek Çap (mm)</label>
                                     <input type="number" class="param-input" id="cal-reference-mm"
                                         placeholder="örn: 30.0" step="0.01" min="0.01">
                                 </div>
