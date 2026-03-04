@@ -14,6 +14,8 @@ const state = {
     pixelsPerMm: 1.0,
     detectedEdges: null, // {top_y, bottom_y, click_x, pixel_distance}
     // Measurement
+    lastMeasurementTable: null,
+    lastSummary: null,
     measureParams: {
         min_section_width_px: 20, gradient_threshold: 2.0,
         blur_ksize: 5, morph_ksize: 5, min_contour_area: 5000,
@@ -70,6 +72,9 @@ function cacheDom() {
     DOM.measureTablePanel = document.getElementById('measurement-table-panel');
     DOM.measureTbody = document.getElementById('measurement-tbody');
     DOM.measureSummary = document.getElementById('measure-summary');
+    DOM.btnDownloadImage = document.getElementById('btn-download-image');
+    DOM.btnDownloadPdf = document.getElementById('btn-download-pdf');
+    DOM.btnDownloadExcel = document.getElementById('btn-download-excel');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -116,6 +121,21 @@ const API = {
         if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Ölçüm başarısız'); }
         return r.json();
     },
+    async download(url, data, filename) {
+        const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        if (!r.ok) {
+            const text = await r.text();
+            throw new Error('İndirme başarısız: ' + text);
+        }
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = window.URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(a.href);
+    }
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -414,11 +434,58 @@ function setupMeasurement() {
         showLoading(true);
         try {
             const r = await API.measure({ image_id: state.imageId, ...state.measureParams });
+            state.lastMeasurementTable = r.measurement_table;
+            state.lastSummary = r.summary;
             DOM.processedImage.src = r.overlay_image;
             DOM.activeAlgoTitle.innerHTML = `Ölçüm Sonucu <span class="algo-badge">${r.summary.total_sections} bölüm</span>`;
             showImagePanels();
             renderMeasurementTable(r.measurement_table, r.summary);
             showToast(`Ölçüm tamamlandı: ${r.summary.total_sections} bölüm tespit edildi`, 'success');
+        } catch (err) { showToast(err.message, 'error'); }
+        finally { showLoading(false); }
+    });
+
+    DOM.btnDownloadPdf.addEventListener('click', async () => {
+        if (!state.imageId || !state.lastMeasurementTable) return;
+        showLoading(true);
+        try {
+            await API.download('/api/report/pdf', {
+                image_id: state.imageId,
+                measurement_table: state.lastMeasurementTable,
+                summary: state.lastSummary,
+                include_image: true,
+                ...state.measureParams
+            }, 'olcum_raporu.pdf');
+            showToast('PDF raporu indirildi', 'success');
+        } catch (err) { showToast(err.message, 'error'); }
+        finally { showLoading(false); }
+    });
+
+    DOM.btnDownloadExcel.addEventListener('click', async () => {
+        if (!state.imageId || !state.lastMeasurementTable) return;
+        showLoading(true);
+        try {
+            await API.download('/api/report/excel', {
+                image_id: state.imageId,
+                measurement_table: state.lastMeasurementTable,
+                summary: state.lastSummary,
+                include_image: false,
+                ...state.measureParams
+            }, 'olcum_raporu.xlsx');
+            showToast('Excel raporu indirildi', 'success');
+        } catch (err) { showToast(err.message, 'error'); }
+        finally { showLoading(false); }
+    });
+
+    DOM.btnDownloadImage.addEventListener('click', async () => {
+        if (!state.imageId) return;
+        showLoading(true);
+        try {
+            await API.download('/api/download-image', {
+                image_id: state.imageId,
+                ...state.measureParams
+            }, 'olcum_gorsel.png');
+            showToast('Ölçüm görseli indirildi', 'success');
         } catch (err) { showToast(err.message, 'error'); }
         finally { showLoading(false); }
     });

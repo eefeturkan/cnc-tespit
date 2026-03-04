@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CNC Parça Ölçüm Sistemi</title>
     <meta name="description" content="Silindirik CNC parçalarının çap ve uzunluk ölçüm sistemi — Görüntü İşleme">
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/style.css?v=3">
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>⚙️</text></svg>">
 </head>
@@ -273,6 +273,17 @@
                             <span class="param-panel-title">📊 Ölçüm Sonuçları</span>
                             <span class="measure-summary" id="measure-summary"></span>
                         </div>
+                        <div class="download-buttons">
+                            <button class="btn-download" id="btn-download-image" title="Görseli İndir">
+                                🖼️ Görsel
+                            </button>
+                            <button class="btn-download" id="btn-download-pdf" title="PDF Rapor İndir">
+                                📄 PDF
+                            </button>
+                            <button class="btn-download btn-download-excel" id="btn-download-excel" title="Excel İndir">
+                                📊 Excel
+                            </button>
+                        </div>
                     </div>
                     <div class="measurement-table-wrapper">
                         <table class="measurement-table" id="measurement-table">
@@ -293,7 +304,7 @@
     </div>
 
     <div class="toast-container" id="toast-container"></div>
-    <script src="/js/app.js"></script>
+    <script src="/js/app.js?v=3"></script>
 </body>
 
 </html>

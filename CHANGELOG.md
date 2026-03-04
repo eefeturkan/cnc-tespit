@@ -4,6 +4,23 @@
 
 ---
 
+## [v3.0] — 2026-03-04
+
+### Faz 3: Rapor Çıktısı
+
+**Yeni Özellikler:**
+- `backend/report_generator.py` eklendi (`reportlab` ile PDF, `openpyxl` ile Excel raporları).
+- **Yeni API Endpoint'leri:**
+  - `/api/report/pdf` — PDF ölçüm raporu.
+  - `/api/report/excel` — Excel ölçüm raporu (tablo ve metadata).
+  - `/api/download-image` — İşlenmiş/Overlay ölçüm görüntüsünü PNG olarak indirme.
+
+**Frontend Güncellemeleri:**
+- Ölçüm sekmesindeki tablo paneline 3 adet indirme butonu eklendi: 🖼️ Görsel, 📄 PDF, 📊 Excel.
+- `app.js` içerisine Javascript Fetch Blob API'si ile dosya indirme fonksiyonları yazıldı.
+
+---
+
 ## [v2.0] — 2026-03-04
 
 ### Faz 2: Kalibrasyon & Ölçüm Motoru

@@ -25,6 +25,7 @@ from calibration import (
 )
 from profile_extractor import extract_profile, draw_profile_overlay
 from measurement_engine import detect_sections, generate_measurement_table, get_measurement_summary
+from report_generator import generate_pdf_report, generate_excel_report
 
 # ---------------------------------------------------------------------------
 # Yollar
@@ -102,6 +103,18 @@ class EdgeDetectRequest(BaseModel):
     click_y: float
     blur_ksize: int = 5
     morph_ksize: int = 5
+
+
+class ReportRequest(BaseModel):
+    image_id: str
+    measurement_table: List[dict]
+    summary: dict
+    include_image: bool = True
+    min_section_width_px: int = 20
+    gradient_threshold: float = 2.0
+    blur_ksize: int = 5
+    morph_ksize: int = 5
+    min_contour_area: int = 5000
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +437,106 @@ async def extract_part_profile(request: MeasureRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Profil hatası: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Faz 3 Endpoint'ler — Rapor & İndirme
+# ---------------------------------------------------------------------------
+@app.post("/api/report/pdf")
+async def download_pdf_report(request: ReportRequest):
+    """PDF ölçüm raporu oluştur ve indir."""
+    # Overlay görüntüsü oluştur (rapora eklemek için)
+    overlay_path = None
+    if request.include_image:
+        try:
+            img = _load_image(request.image_id)
+            profile = extract_profile(img, {
+                "blur_ksize": request.blur_ksize,
+                "morph_ksize": request.morph_ksize,
+                "min_contour_area": request.min_contour_area,
+            })
+            sections = detect_sections(
+                profile, active_calibration,
+                min_section_width_px=request.min_section_width_px,
+                gradient_threshold=request.gradient_threshold,
+            )
+            overlay = draw_profile_overlay(img, profile, active_calibration.pixels_per_mm, sections)
+            overlay_path = str(REPORTS_DIR / f"overlay_{request.image_id}")
+            cv2.imwrite(overlay_path, overlay)
+        except Exception:
+            overlay_path = None
+
+    cal_info = active_calibration.to_dict()
+    pdf_bytes = generate_pdf_report(
+        measurement_table=request.measurement_table,
+        summary=request.summary,
+        calibration_info=cal_info,
+        image_path=overlay_path,
+    )
+
+    # Geçici overlay dosyasını temizle
+    if overlay_path and os.path.exists(overlay_path):
+        os.remove(overlay_path)
+
+    from fastapi.responses import Response
+    from datetime import datetime
+    filename = f"olcum_raporu_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/api/report/excel")
+async def download_excel_report(request: ReportRequest):
+    """Excel ölçüm raporu oluştur ve indir."""
+    cal_info = active_calibration.to_dict()
+    excel_bytes = generate_excel_report(
+        measurement_table=request.measurement_table,
+        summary=request.summary,
+        calibration_info=cal_info,
+    )
+
+    from fastapi.responses import Response
+    from datetime import datetime
+    filename = f"olcum_raporu_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/api/download-image")
+async def download_processed_image(request: MeasureRequest):
+    """İşlenmiş (ölçüm overlay) görüntüyü PNG olarak indir."""
+    img = _load_image(request.image_id)
+    try:
+        profile = extract_profile(img, {
+            "blur_ksize": request.blur_ksize,
+            "morph_ksize": request.morph_ksize,
+            "min_contour_area": request.min_contour_area,
+        })
+        sections = detect_sections(
+            profile, active_calibration,
+            min_section_width_px=request.min_section_width_px,
+            gradient_threshold=request.gradient_threshold,
+        )
+        overlay = draw_profile_overlay(img, profile, active_calibration.pixels_per_mm, sections)
+
+        _, png_data = cv2.imencode(".png", overlay)
+
+        from fastapi.responses import Response
+        from datetime import datetime
+        filename = f"olcum_gorsel_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        return Response(
+            content=png_data.tobytes(),
+            media_type="image/png",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Görüntü indirme hatası: {str(e)}")
 
 
 # ---------------------------------------------------------------------------

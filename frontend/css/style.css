@@ -1146,6 +1146,40 @@ input[type="range"]::-moz-range-thumb {
     }
 }
 
+/* Download Buttons */
+.download-buttons {
+    display: flex;
+    gap: var(--space-sm);
+}
+
+.btn-download {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-family: var(--font-display);
+    font-size: .7rem;
+    font-weight: 600;
+    padding: var(--space-xs) var(--space-md);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-download:hover {
+    background: var(--accent-glow);
+    color: var(--accent-secondary);
+    border-color: var(--border-active);
+}
+
+.btn-download-excel:hover {
+    background: rgba(16, 185, 129, .15);
+    color: var(--success);
+    border-color: rgba(16, 185, 129, .4);
+}
+
 @media (max-width:900px) {
     .main-content {
         grid-template-columns: 1fr;
