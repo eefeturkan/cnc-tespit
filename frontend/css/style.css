@@ -581,6 +581,11 @@ body::before {
     font-weight: 600;
 }
 
+.cal-point-value.cal-highlight {
+    color: var(--accent-secondary);
+    font-size: .72rem;
+}
+
 .param-input {
     font-family: var(--font-display);
     font-size: .75rem;
