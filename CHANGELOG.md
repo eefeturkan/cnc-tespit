@@ -4,6 +4,63 @@
 
 ---
 
+## [v4.4] — 2026-03-05
+
+### Kalibrasyon ve Ölçüm Sapması Düzeltmesi
+- Kenar haritaları (Canny vb.) üzerinde yapılan kalibrasyon (örn. 29.7 mm) ile ölçüm sonuçları (örn. 35 mm)
+  arasındaki sapma sorunu giderildi.
+- Profil çıkarılırken (`extract_profile`), parçanın üst ve alt kenar pikselleri artık morfolojik 
+  işlemlerle (dilate/close) şişirilmiş/kalınlaştırılmış maske üzerinden **değil**, orijinal ince 
+  ve keskin kenar çizgileri (`binary_edges`) üzerinden hesaplanıyor. Bu sayede kalibrasyon ile 
+  ölçüm motoru birebir aynı pikselleri baz alıyor.
+
+---
+
+## [v4.3] — 2026-03-05
+
+### Kenar Haritası (Canny vb.) Profil Çıkarma Düzeltmesi
+- Siyah zemin üzerinde beyaz kenar çizgilerinden oluşan görüntülerde (Canny, Sobel vb.) profil çıkarılırken
+  parçanın tamamını kaplayan devasa dikdörtgen (boundingBox) çizilmesi hatası düzeltildi.
+- Algoritma artık görüntünün parlaklığına bakıp "Kenar Haritası" moduna geçiyor ve sadece dış beyaz çizgilerin içini 
+  doldurarak (solid_mask) doğru ve kesin bir parça silüeti çıkarıyor.
+
+---
+
+## [v4.2] — 2026-03-05
+
+### Ölçüm & Profil — İşlenmiş Görsel Üzerinden
+- `Profil Çıkar` ve `Tam Ölçüm` butonları artık algoritmalar sekmesinde uygulanan görüntü varsa
+  o görsel üzerinden profil silüeti ve ölçüm yapıyor (orijinal değil).
+- PDF, Excel ve görsel indirme butonları da aynı şekilde `processedImageId || imageId` mantığıyla çalışıyor.
+
+---
+
+## [v4.1] — 2026-03-05
+
+### Kalibrasyon İyileştirmeleri
+
+**1. Algoritma → Kalibrasyon Entegrasyonu**
+- `/api/process` endpoint'i artık işlenmiş görüntüyü diske kaydediyor ve `processed_image_id` döndürüyor.
+- Algoritma sekmesinde bir algoritma uygulandıktan sonra kalibrasyon sekmesine geçilince,  
+  kalibrasyon artık **orijinal görsel yerine işlenmiş görsel** üzerinden yapılır.
+- Kalibrasyon ipucu metni, algoritma uygulanmışsa mavi uyarı rengiyle güncelleniyor.
+
+**2. İşlenmiş Görsel Üzerinde Kalibrasyon Tıklaması**
+- Kalibrasyon (`Otomatik Kenar`) modunda hem **orijinal** hem **işlenmiş** görsele tıklanabilir.
+- Kalibrasyon sekmesine geçilince algoritma uygulanmışsa otomatik olarak tek görünüme geçip işlenmiş görsel ön plana çıkarılıyor.
+- `processedImage`'a tıklama ile de kenar tespiti ve kalibrasyon yapılabiliyor.
+
+---
+
+## [v4.0] — 2026-03-04
+
+### Faz 4: Polish & Dokümantasyon
+- Kapsamlı `README.md` dokümantasyonu (özellikler, mimari, kullanım rehberi) oluşturuldu.
+- `task.md` üzerindeki tüm Fazlar tamamlandı olarak işaretlendi.
+- Projede Frontend ve API bazında var olan `try-catch` mekanizmaları teyit edilerek stabilite güvence altına alındı.
+
+---
+
 ## [v3.0] — 2026-03-04
 
 ### Faz 3: Rapor Çıktısı

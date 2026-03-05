@@ -7,6 +7,8 @@ const state = {
     imageId: null, imageUrl: null, imageName: null,
     algorithms: [], selectedAlgorithm: null, currentParams: {},
     viewMode: 'split',
+    // Algorithm result
+    processedImageId: null, // Algoritma uygulanmış görüntünün disk ID'si
     // Calibration
     calMode: 'auto', // 'auto' or 'manual'
     isCalibrating: false,
@@ -181,12 +183,34 @@ function setupTabs() {
             if (btn.dataset.tab === 'tab-calibration' && state.calMode === 'auto') {
                 state.isCalibrating = true;
                 DOM.originalPanel.classList.add('calibrating');
+                DOM.processedPanel.classList.add('calibrating');
+                // Algoritma uygulanmışsa işlenmiş görsel üzerinden kalibre et
+                // → tek görünüme geç, processed paneli göster
+                if (state.processedImageId) {
+                    updateViewMode('single');
+                    DOM.originalPanel.classList.add('hidden');
+                    DOM.processedPanel.classList.remove('hidden');
+                }
             } else {
                 state.isCalibrating = false;
                 DOM.originalPanel.classList.remove('calibrating');
+                DOM.processedPanel.classList.remove('calibrating');
             }
         });
     });
+}
+
+// Kalibrasyon hint metnini güncelle
+function updateCalibrationHint() {
+    const hint = document.getElementById('cal-hint-text');
+    if (!hint) return;
+    if (state.processedImageId) {
+        hint.innerHTML = '⚠️ Algoritma uygulandı. <strong>Kalibrasyon işlenmiş görsel</strong> üzerinden yapılacak. Her iki görsele de tıklayabilirsiniz.';
+        hint.style.color = 'var(--accent-secondary)';
+    } else {
+        hint.innerHTML = 'Parçanın üzerine tıklayın — üst ve alt kenarlar otomatik tespit edilir. Sonra gerçek çap değerini mm olarak girin.';
+        hint.style.color = '';
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -257,6 +281,7 @@ async function handleFile(file) {
     try {
         const r = await API.uploadImage(file);
         state.imageId = r.image_id; state.imageUrl = r.url; state.imageName = r.filename;
+        state.processedImageId = null; // Yeni görsel yüklenince sıfırla
         DOM.uploadZone.style.display = 'none';
         DOM.thumbnailPreview.classList.add('visible');
         DOM.thumbnailImg.src = r.url; DOM.thumbnailName.textContent = r.filename;
@@ -267,6 +292,7 @@ async function handleFile(file) {
         // Reset edges
         state.detectedEdges = null;
         resetEdgeDisplay();
+        updateCalibrationHint();
         showToast(`${r.filename} yüklendi`, 'success');
         if (state.selectedAlgorithm) await applyAlgorithm();
     } catch (err) { showToast(err.message, 'error'); }
@@ -283,6 +309,9 @@ async function applyAlgorithm() {
     try {
         const r = await API.processImage(state.imageId, state.selectedAlgorithm.name, state.currentParams);
         DOM.processedImage.src = r.result_image;
+        // İşlenmiş görüntü ID'sini sakla — kalibrasyon bu görsel üzerinden yapılabilir
+        state.processedImageId = r.processed_image_id || null;
+        updateCalibrationHint();
         showImagePanels();
         showToast(`${state.selectedAlgorithm.display_name} uygulandı`, 'success');
     } catch (err) { showToast(err.message, 'error'); }
@@ -307,8 +336,9 @@ function setupCalibration() {
         DOM.originalPanel.classList.remove('calibrating');
     });
 
-    // Tek tıklama ile kenar tespiti
+    // Tek tıklama ile kenar tespiti (hem orijinal hem işlenmiş görselde)
     DOM.originalImage.addEventListener('click', handleAutoEdgeClick);
+    DOM.processedImage.addEventListener('click', handleAutoEdgeClick);
 
     // Kalibre Et butonu
     DOM.btnCalibrate.addEventListener('click', async () => {
@@ -342,17 +372,23 @@ function setupCalibration() {
 async function handleAutoEdgeClick(e) {
     if (!state.isCalibrating || !state.imageId) return;
 
-    const img = DOM.originalImage;
-    const rect = img.getBoundingClientRect();
-    const scaleX = img.naturalWidth / rect.width;
-    const scaleY = img.naturalHeight / rect.height;
+    // Tıklanan görseli belirle: processed veya original
+    const isProcessedClick = (e.currentTarget === DOM.processedImage);
+    const refImg = isProcessedClick ? DOM.processedImage : DOM.originalImage;
+    const rect = refImg.getBoundingClientRect();
+    const scaleX = refImg.naturalWidth / rect.width;
+    const scaleY = refImg.naturalHeight / rect.height;
     const clickX = Math.round((e.clientX - rect.left) * scaleX);
     const clickY = Math.round((e.clientY - rect.top) * scaleY);
+
+    // Hangi image_id kullanılacak:
+    // Algoritma uygulanmışsa işlenmiş görselin ID'si, aksi halde orijinal
+    const calImageId = state.processedImageId || state.imageId;
 
     showLoading(true);
     try {
         const r = await API.detectEdges({
-            image_id: state.imageId,
+            image_id: calImageId,
             click_x: clickX,
             click_y: clickY,
         });
@@ -360,6 +396,7 @@ async function handleAutoEdgeClick(e) {
 
         // Overlay görüntüsünü göster (kenar çizgileri)
         DOM.processedImage.src = r.overlay_image;
+        DOM.processedPanel.classList.remove('hidden');
         DOM.activeAlgoTitle.innerHTML = 'Kenar Tespiti <span class="algo-badge">kalibrasyon</span>';
         showImagePanels();
 
@@ -418,9 +455,10 @@ function setupMeasurement() {
 
     DOM.btnProfile.addEventListener('click', async () => {
         if (!state.imageId) { showToast('Önce fotoğraf yükleyin', 'warning'); return; }
+        const activeId = state.processedImageId || state.imageId;
         showLoading(true);
         try {
-            const r = await API.extractProfile({ image_id: state.imageId, ...state.measureParams });
+            const r = await API.extractProfile({ image_id: activeId, ...state.measureParams });
             DOM.processedImage.src = r.overlay_image;
             DOM.activeAlgoTitle.innerHTML = 'Profil Çıkarma <span class="algo-badge">overlay</span>';
             showImagePanels();
@@ -431,9 +469,10 @@ function setupMeasurement() {
 
     DOM.btnMeasure.addEventListener('click', async () => {
         if (!state.imageId) { showToast('Önce fotoğraf yükleyin', 'warning'); return; }
+        const activeId = state.processedImageId || state.imageId;
         showLoading(true);
         try {
-            const r = await API.measure({ image_id: state.imageId, ...state.measureParams });
+            const r = await API.measure({ image_id: activeId, ...state.measureParams });
             state.lastMeasurementTable = r.measurement_table;
             state.lastSummary = r.summary;
             DOM.processedImage.src = r.overlay_image;
@@ -447,10 +486,11 @@ function setupMeasurement() {
 
     DOM.btnDownloadPdf.addEventListener('click', async () => {
         if (!state.imageId || !state.lastMeasurementTable) return;
+        const activeId = state.processedImageId || state.imageId;
         showLoading(true);
         try {
             await API.download('/api/report/pdf', {
-                image_id: state.imageId,
+                image_id: activeId,
                 measurement_table: state.lastMeasurementTable,
                 summary: state.lastSummary,
                 include_image: true,
@@ -466,7 +506,7 @@ function setupMeasurement() {
         showLoading(true);
         try {
             await API.download('/api/report/excel', {
-                image_id: state.imageId,
+                image_id: state.processedImageId || state.imageId,
                 measurement_table: state.lastMeasurementTable,
                 summary: state.lastSummary,
                 include_image: false,
@@ -479,10 +519,11 @@ function setupMeasurement() {
 
     DOM.btnDownloadImage.addEventListener('click', async () => {
         if (!state.imageId) return;
+        const activeId = state.processedImageId || state.imageId;
         showLoading(true);
         try {
             await API.download('/api/download-image', {
-                image_id: state.imageId,
+                image_id: activeId,
                 ...state.measureParams
             }, 'olcum_gorsel.png');
             showToast('Ölçüm görseli indirildi', 'success');

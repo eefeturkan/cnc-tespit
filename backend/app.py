@@ -189,6 +189,12 @@ async def process_image(request: ProcessRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"İşleme hatası: {str(e)}")
 
+    # İşlenmiş görüntüyü diske kaydet (kalibrasyon için kullanılabilir)
+    ext = Path(request.image_id).suffix or ".png"
+    proc_id = f"proc_{uuid.uuid4().hex}{ext}"
+    proc_path = UPLOAD_DIR / proc_id
+    cv2.imwrite(str(proc_path), result)
+
     result_b64 = _image_to_base64(result)
     return {
         "algorithm": request.algorithm,
@@ -196,6 +202,8 @@ async def process_image(request: ProcessRequest):
         "result_image": f"data:image/png;base64,{result_b64}",
         "result_width": result.shape[1],
         "result_height": result.shape[0],
+        "processed_image_id": proc_id,
+        "processed_url": f"/uploads/{proc_id}",
     }
 
 
@@ -235,39 +243,86 @@ async def detect_edges(request: EdgeDetectRequest):
     # Gri tonlama
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img.copy()
 
-    # Blur + Otsu threshold
+    # Görüntünün türünü belirle:
+    # Kenar haritaları (Canny, Sobel, Laplacian vb.) genellikle çok koyu ortalama değere sahiptir
+    # çünkü siyah arka plan üzerinde ince beyaz çizgiler vardır.
+    # Normal parça görüntülerinde ise ortalama parlaklık çok daha yüksektir.
+    mean_brightness = float(np.mean(gray))
+    is_edge_map = mean_brightness < 40  # Kenar haritası heuristic (ortalama < 40/255)
+
     bk = request.blur_ksize if request.blur_ksize % 2 == 1 else request.blur_ksize + 1
-    blurred = cv2.GaussianBlur(gray, (bk, bk), 0)
-    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # Morfolojik temizleme
-    mk = request.morph_ksize if request.morph_ksize % 2 == 1 else request.morph_ksize + 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    if is_edge_map:
+        # ── Kenar Haritası Modu ──────────────────────────────────────────────
+        # Canny/Sobel/Laplacian gibi çıktılar: siyah zemin, beyaz kenarlıklar
+        # Beyaz pikselleri doğrudan bul — threshold ters çevirme yapmıyoruz.
+        # Hafif dilatasyon ile ince çizgileri biraz kalınlaştır (daha stabil tespit)
+        mk = request.morph_ksize if request.morph_ksize % 2 == 1 else request.morph_ksize + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
+        binary = cv2.dilate(gray, kernel, iterations=1)
+        _, binary = cv2.threshold(binary, 20, 255, cv2.THRESH_BINARY)  # düşük eşik: kenarları yakala
 
-    # Tıklanan x kolonundaki beyaz pikselleri bul
-    col = binary[:, click_x]
-    white_pixels = np.where(col > 0)[0]
+        # Tıklanan kolondaki beyaz pikselleri bul → en üstteki ve en alttaki kenar
+        col = binary[:, click_x]
+        white_pixels = np.where(col > 0)[0]
 
-    if len(white_pixels) == 0:
-        # Yakın kolonlarda da ara (±20 piksel)
-        for offset in range(1, 21):
-            for dx in [click_x - offset, click_x + offset]:
-                if 0 <= dx < w:
-                    col = binary[:, dx]
-                    white_pixels = np.where(col > 0)[0]
-                    if len(white_pixels) > 0:
-                        click_x = dx
-                        break
-            if len(white_pixels) > 0:
-                break
+        if len(white_pixels) == 0:
+            for offset in range(1, 30):
+                for dx in [click_x - offset, click_x + offset]:
+                    if 0 <= dx < w:
+                        col = binary[:, dx]
+                        white_pixels = np.where(col > 0)[0]
+                        if len(white_pixels) > 0:
+                            click_x = dx
+                            break
+                if len(white_pixels) > 0:
+                    break
 
-    if len(white_pixels) == 0:
-        raise HTTPException(status_code=400, detail="Bu noktada parça kenarı tespit edilemedi. Farklı bir nokta deneyin.")
+        if len(white_pixels) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Bu noktada kenar bulunamadı. Daha az işlenmiş görsel kullanın veya farklı bir nokta deneyin."
+            )
 
-    top_y = int(white_pixels[0])
-    bottom_y = int(white_pixels[-1])
+        # En üstteki ve en alttaki beyaz piksel = üst ve alt kenar
+        top_y = int(white_pixels[0])
+        bottom_y = int(white_pixels[-1])
+
+    else:
+        # ── Normal Görüntü Modu ──────────────────────────────────────────────
+        # Orijinal veya az işlenmiş görüntü: parça gövdesi tespit edilir.
+        blurred = cv2.GaussianBlur(gray, (bk, bk), 0)
+        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        mk = request.morph_ksize if request.morph_ksize % 2 == 1 else request.morph_ksize + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        col = binary[:, click_x]
+        white_pixels = np.where(col > 0)[0]
+
+        if len(white_pixels) == 0:
+            for offset in range(1, 21):
+                for dx in [click_x - offset, click_x + offset]:
+                    if 0 <= dx < w:
+                        col = binary[:, dx]
+                        white_pixels = np.where(col > 0)[0]
+                        if len(white_pixels) > 0:
+                            click_x = dx
+                            break
+                if len(white_pixels) > 0:
+                    break
+
+        if len(white_pixels) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Bu noktada parça kenarı tespit edilemedi. Farklı bir nokta deneyin."
+            )
+
+        top_y = int(white_pixels[0])
+        bottom_y = int(white_pixels[-1])
+
     pixel_distance = bottom_y - top_y
 
     # Overlay görüntüsü oluştur — kenar çizgilerini göster

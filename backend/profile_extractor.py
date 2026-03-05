@@ -37,20 +37,46 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
     morph_ksize = params.get("morph_ksize", 5)
     min_contour_area = params.get("min_contour_area", 5000)
 
-    # 1. Gri tonlama
+    # 1. Gri tonlama ve parlaklık analizi
     if len(image.shape) == 3:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     else:
         gray = image.copy()
 
-    # 2. Blur + Otsu threshold
-    blurred = cv2.GaussianBlur(gray, (blur_ksize, blur_ksize), 0)
-    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    mean_brightness = float(np.mean(gray))
+    is_edge_map = mean_brightness < 40  # Kenar haritası tespit eşiği
 
-    # 3. Morfolojik temizleme
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (morph_ksize, morph_ksize))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    if is_edge_map:
+        # KENAR HARİTASI MODU (siyah zemin, beyaz çizgiler)
+        # 1. Hafif blur ve threshold ile kenarları netleştir
+        binary_edges = cv2.GaussianBlur(gray, (3, 3), 0)
+        _, binary_edges = cv2.threshold(binary_edges, 20, 255, cv2.THRESH_BINARY)
+        
+        # 2. İçi boş (sadece sınırları olan) haritadan solid maske üret
+        h, w = binary_edges.shape
+        solid_mask = np.zeros_like(binary_edges)
+        for x in range(w):
+            col = binary_edges[:, x]
+            white_idx = np.where(col > 0)[0]
+            if len(white_idx) > 0:
+                y1 = white_idx[0]
+                y2 = white_idx[-1]
+                # En az birkaç piksel kalınlığında bir şekilse içini doldur
+                if y2 - y1 > 5:
+                    solid_mask[y1:y2+1, x] = 255
+                    
+        # 3. Morfolojik temizleme
+        mk = morph_ksize + 2  # Kenar haritasında kopuklukları dikmek için biraz daha agresif
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
+        binary = cv2.morphologyEx(solid_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    else:
+        # NORMAL GÖRÜNTÜ MODU (Otsu Threshold ile solid maske)
+        blurred = cv2.GaussianBlur(gray, (blur_ksize, blur_ksize), 0)
+        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (morph_ksize, morph_ksize))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
 
     # 4. Kontur bul — en büyüğü = parça
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -80,7 +106,13 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
     center_y_list = []
 
     for x in range(x_start, x_end):
-        col = mask[:, x]
+        # Eğer Edge Map (Canny vb) modundaysak, morfoloji uygulanmış şişik maskeyi değil,
+        # orijinal keskin çizgileri barındıran binary_edges'i veya orijinal maskeyi kullan.
+        if is_edge_map and 'binary_edges' in locals():
+            col = binary_edges[:, x]
+        else:
+            col = mask[:, x]
+            
         white_pixels = np.where(col > 0)[0]
 
         if len(white_pixels) == 0:
