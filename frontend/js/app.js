@@ -528,10 +528,19 @@ function setupMeasurement() {
         if (!state.imageId || !state.lastMeasurementTable) return;
         const activeId = state.processedImageId || state.imageId;
         showLoading(true);
+
+        // Tabloyu referans verilerle zenginleştir
+        const enrichedTable = state.lastMeasurementTable.map(row => ({
+            ...row,
+            target: state.referencePart[row.id]?.target || null,
+            tol: state.referencePart[row.id]?.tol || 0.05,
+            status: row.status || null
+        }));
+
         try {
             await API.download('/api/report/pdf', {
                 image_id: activeId,
-                measurement_table: state.lastMeasurementTable,
+                measurement_table: enrichedTable,
                 summary: state.lastSummary,
                 include_image: true,
                 ...state.measureParams
@@ -544,10 +553,19 @@ function setupMeasurement() {
     DOM.btnDownloadExcel.addEventListener('click', async () => {
         if (!state.imageId || !state.lastMeasurementTable) return;
         showLoading(true);
+
+        // Tabloyu referans verilerle zenginleştir
+        const enrichedTable = state.lastMeasurementTable.map(row => ({
+            ...row,
+            target: state.referencePart[row.id]?.target || null,
+            tol: state.referencePart[row.id]?.tol || 0.05,
+            status: row.status || null
+        }));
+
         try {
             await API.download('/api/report/excel', {
                 image_id: state.processedImageId || state.imageId,
-                measurement_table: state.lastMeasurementTable,
+                measurement_table: enrichedTable,
                 summary: state.lastSummary,
                 include_image: false,
                 ...state.measureParams
@@ -577,6 +595,9 @@ function renderMeasurementTable(table, summary) {
     DOM.measureTablePanel.classList.add('visible');
     DOM.paramPanel.classList.remove('visible');
 
+    // Referans parçası nesnesi yoksa başlat
+    if (!state.referencePart) state.referencePart = {};
+
     // Summary
     if (summary.total_sections > 0) {
         DOM.measureSummary.textContent = `${summary.total_sections} bölüm | Çap: ${summary.min_diameter_mm.toFixed(2)}—${summary.max_diameter_mm.toFixed(2)} mm | Toplam boy: ${summary.total_length_mm.toFixed(2)} mm`;
@@ -587,14 +608,79 @@ function renderMeasurementTable(table, summary) {
     table.forEach(row => {
         const tr = document.createElement('tr');
         const typeClass = row.type === 'Çap' ? 'type-cap' : 'type-length';
+
+        let targetVal = state.referencePart[row.id]?.target || '';
+        let tolVal = state.referencePart[row.id]?.tol || 0.05;
+
         tr.innerHTML = `
             <td>${row.id}</td>
             <td class="${typeClass}">${row.type}</td>
             <td>${row.description}</td>
-            <td>${row.measured_mm.toFixed(4)}</td>
+            <td class="measured-value-cell">${row.measured_mm.toFixed(4)}</td>
+            <td><input type="number" class="ref-target" data-id="${row.id}" value="${targetVal}" step="0.01" style="width:70px; background:#1e293b; color:#fff; border:1px solid #334155; border-radius:4px; padding:2px;"></td>
+            <td><input type="number" class="ref-tol" data-id="${row.id}" value="${tolVal}" step="0.01" style="width:60px; background:#1e293b; color:#fff; border:1px solid #334155; border-radius:4px; padding:2px;"></td>
+            <td class="status-cell" id="status-${row.id}">-</td>
         `;
         DOM.measureTbody.appendChild(tr);
+
+        // Değer değiştiğinde otomatik hesaplama
+        const inpTarget = tr.querySelector('.ref-target');
+        const inpTol = tr.querySelector('.ref-tol');
+        const updateStatus = () => {
+            const target = parseFloat(inpTarget.value);
+            const tol = parseFloat(inpTol.value);
+            const statusCell = tr.querySelector('.status-cell');
+
+            // State'e kaydet (birden fazla parça ölçülünce hatırlasın)
+            if (!state.referencePart[row.id]) state.referencePart[row.id] = {};
+            state.referencePart[row.id].target = isNaN(target) ? null : target;
+            state.referencePart[row.id].tol = isNaN(tol) ? 0.05 : tol;
+
+            if (isNaN(target)) {
+                statusCell.textContent = '-';
+                statusCell.className = 'status-cell';
+                row.status = null;
+                return;
+            }
+
+            const diff = Math.abs(row.measured_mm - target);
+            if (diff <= tol) {
+                statusCell.textContent = 'PASS';
+                statusCell.className = 'status-cell status-pass';
+                statusCell.style.color = '#4ade80';
+                statusCell.style.fontWeight = 'bold';
+                row.status = 'PASS';
+            } else {
+                statusCell.textContent = 'FAIL';
+                statusCell.className = 'status-cell status-fail';
+                statusCell.style.color = '#f87171';
+                statusCell.style.fontWeight = 'bold';
+                row.status = 'FAIL';
+            }
+        };
+
+        inpTarget.addEventListener('input', updateStatus);
+        inpTol.addEventListener('input', updateStatus);
+
+        // İlk yüklendiğinde statusleri hesaplasın
+        if (targetVal) updateStatus();
     });
+
+    // "Referans Ayarla" butonuna basılırsa, o anki ölçülmüş tüm değerleri Hedef olarak kaydet
+    const btnSetReference = document.getElementById('btn-set-reference');
+    if (btnSetReference) {
+        btnSetReference.onclick = () => {
+            table.forEach(row => {
+                if (!state.referencePart[row.id]) state.referencePart[row.id] = {};
+                // Ölçülen değeri doğrudan Yuvarlayarak hedefe at (Örn 14.8099 -> 14.81)
+                state.referencePart[row.id].target = parseFloat(row.measured_mm.toFixed(2));
+                state.referencePart[row.id].tol = 0.05; // Varsayılan tolerans
+            });
+            // Tabloyu ekranda güncelle
+            renderMeasurementTable(table, summary);
+            showToast('Aktif parça kopyalandı ve altın referans olarak ayarlandı', 'success');
+        };
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════

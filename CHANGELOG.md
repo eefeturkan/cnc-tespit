@@ -4,6 +4,25 @@
 
 ---
 
+## [v4.7] — 2026-03-05
+
+### Tolerans Yönetimi ve Referans Parça Uygunluğu (Pass/Fail)
+- **Sorun:** Ölçülen CNC parçasının, üretilmesi istenen asıl değerde (nominal) olup olmadığı bilinmiyordu.
+- **Çözüm:** Ölçüm tablosuna dinamik olarak **Hedef (mm)**, **Tolerans (±)** ve **Durum (PASS/FAIL)** sütunları eklendi.
+- **Yetenek:** 
+  - Gelen ölçümlere tolerans değeri girilerek (Örn: 0.05 mm) parça sapmasının tolerans içinde olup olmadığı anında **Yeşil (PASS)** veya **Kırmızı (FAIL)** metinlerle tespit edilebiliyor.
+  - "🎯 Referans Ayarla" butonuyla ekrandaki güncel ölçümler tek tuşla tüm bölümler için **Golden Part (Sıfır Hatalı Parça)** referansı olarak kaydediliyor. Ardından yüklenen tüm parçaların bu Altın parçadan ne kadar saptığı otomatik ölçülüyor.
+- **Raporlama:** Pass/Fail durum renkleri (kırmızı/yeşil) dahil olmak üzere, Hedef ve Tolerans bilgileri otomatik üretilen PDF ve Excel (.xlsx) raporlarına entegre edildi. Excel hücreleri de PASS ise yeşile, FAIL ise kırmızıya boyandı.
+
+---
+
+## [v4.6] — 2026-03-05
+
+### X Ekseni (Uzunluk) ve Y Ekseni (Çap) Asimetrisi Düzeltmesi (Geri Alındı ve Yeniden Girdi)
+- Lens distorsiyonu (bombe) veya kare olmayan piksellerden dolayı oluşan X ve Y eksenleri asimetrisi için API ve `measurement_engine.py` arasına **X-Scale** düzeltici çarpanı katıldı.
+
+---
+
 ## [v4.5] — 2026-03-05
 
 ### Arayüz Görünümü (Overlay) Temizleme

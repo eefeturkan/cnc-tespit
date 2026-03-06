@@ -142,16 +142,38 @@ def generate_pdf_report(
 
     # Ölçüm tablosu
     elements.append(Paragraph("Ölçüm Sonuçları", section_style))
-    table_data = [["ID", "Tip", "Açıklama", "Ölçülen (mm)"]]
-    for row in measurement_table:
+    table_data = [["ID", "Tip", "Açıklama", "Ölçülen (mm)", "Hedef", "Tolerans", "Durum"]]
+    
+    # Hücre stili komutları
+    pass_fail_styles = []
+    
+    for idx, row in enumerate(measurement_table):
+        target_str = str(row.get('target')) if row.get('target') is not None else "-"
+        tol_str = f"±{row.get('tol')}" if row.get('tol') is not None else "-"
+        status = row.get('status') or "-"
+        
         table_data.append([
             row["id"],
             row["type"],
             row["description"],
             f"{row['measured_mm']:.4f}",
+            target_str,
+            tol_str,
+            status
         ])
+        
+        # Sütun endeksleri: ID=0, Tip=1, Açıklama=2, Ölçülen=3, Hedef=4, Tolerans=5, Durum=6
+        current_row_idx = idx + 1 # Başlık satırından sonra
+        
+        if status == "PASS":
+            pass_fail_styles.append(("TEXTCOLOR", (6, current_row_idx), (6, current_row_idx), HexColor("#16a34a")))
+            pass_fail_styles.append(("FONTNAME", (6, current_row_idx), (6, current_row_idx), "Helvetica-Bold"))
+        elif status == "FAIL":
+            pass_fail_styles.append(("TEXTCOLOR", (6, current_row_idx), (6, current_row_idx), HexColor("#dc2626")))
+            pass_fail_styles.append(("FONTNAME", (6, current_row_idx), (6, current_row_idx), "Helvetica-Bold"))
 
-    col_widths = [20 * mm, 25 * mm, 55 * mm, 35 * mm]
+    # Yeni genişlik (A4: 190 mm)
+    col_widths = [12 * mm, 15 * mm, 55 * mm, 25 * mm, 20 * mm, 20 * mm, 20 * mm]
     measure_table = Table(table_data, colWidths=col_widths)
 
     # Tablo stili
@@ -159,19 +181,20 @@ def generate_pdf_report(
         ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
         ("TEXTCOLOR", (0, 0), (-1, 0), white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("GRID", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-        ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+        ("ALIGN", (3, 1), (6, -1), "CENTER"), # Tüm sayısal kolonları sınırla
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
     ]
     # Satır renklendirme
     for i in range(1, len(table_data)):
         if i % 2 == 0:
             table_style_cmds.append(("BACKGROUND", (0, i), (-1, i), HexColor("#f5f5f5")))
 
+    table_style_cmds.extend(pass_fail_styles)
     measure_table.setStyle(TableStyle(table_style_cmds))
     elements.append(measure_table)
 
@@ -294,13 +317,19 @@ def generate_excel_report(
     row += 1
 
     # Tablo başlıkları
-    headers = ["ID", "Tip", "Açıklama", "Ölçülen (mm)"]
+    headers = ["ID", "Tip", "Açıklama", "Ölçülen (mm)", "Hedef", "Tol. (±)", "Durum"]
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=row, column=col, value=h)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = center_align
         cell.border = border_thin
+
+    # Durum hücreleri için PatternFill boyama tipleri
+    pass_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    fail_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    pass_font = Font(name="Calibri", size=10, color="166534", bold=True)
+    fail_font = Font(name="Calibri", size=10, color="991B1B", bold=True)
 
     # Tablo verileri
     for entry in measurement_table:
@@ -322,12 +351,42 @@ def generate_excel_report(
         ws.cell(row=row, column=4).alignment = right_align
         ws.cell(row=row, column=4).number_format = "0.0000"
         ws.cell(row=row, column=4).border = border_thin
+        
+        # Hedef
+        t_val = entry.get("target")
+        ws.cell(row=row, column=5, value=t_val if t_val is not None else "-").font = data_font
+        ws.cell(row=row, column=5).alignment = center_align
+        ws.cell(row=row, column=5).border = border_thin
+        
+        # Tolerans
+        tol_val = entry.get("tol")
+        ws.cell(row=row, column=6, value=tol_val if tol_val is not None else "-").font = data_font
+        ws.cell(row=row, column=6).alignment = center_align
+        ws.cell(row=row, column=6).border = border_thin
+        
+        # Durum (PASS/FAIL)
+        status = entry.get("status") or "-"
+        status_cell = ws.cell(row=row, column=7, value=status)
+        status_cell.alignment = center_align
+        status_cell.border = border_thin
+        
+        if status == "PASS":
+            status_cell.fill = pass_fill
+            status_cell.font = pass_font
+        elif status == "FAIL":
+            status_cell.fill = fail_fill
+            status_cell.font = fail_font
+        else:
+            status_cell.font = data_font
 
     # Kolon genişlikleri
-    ws.column_dimensions["A"].width = 12
-    ws.column_dimensions["B"].width = 14
+    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["B"].width = 12
     ws.column_dimensions["C"].width = 30
-    ws.column_dimensions["D"].width = 18
+    ws.column_dimensions["D"].width = 16
+    ws.column_dimensions["E"].width = 12
+    ws.column_dimensions["F"].width = 12
+    ws.column_dimensions["G"].width = 12
 
     # Kaydet
     buf = io.BytesIO()
