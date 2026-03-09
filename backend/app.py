@@ -491,6 +491,7 @@ async def measure_part(request: MeasureRequest):
             "measurement_table": table,
             "summary": summary,
             "calibration": active_calibration.to_dict(),
+            "x_calibrated": active_calibration.x_is_calibrated,
         }
 
     except ValueError as e:

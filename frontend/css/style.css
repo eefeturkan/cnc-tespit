@@ -637,6 +637,98 @@ body::before {
     color: var(--text-primary);
 }
 
+/* X-Eksen Kalibrasyon Bölümü */
+.cal-x-section {
+    margin-top: var(--space-md);
+    padding: var(--space-md);
+    background: rgba(245, 158, 11, .06);
+    border: 1px solid rgba(245, 158, 11, .2);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.cal-x-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-family: var(--font-display);
+    font-size: .72rem;
+    font-weight: 600;
+    color: var(--warning);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+
+.cal-x-step-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) 0;
+}
+
+.cal-x-step {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-display);
+    font-size: .68rem;
+    color: var(--text-tertiary);
+    transition: color var(--transition-fast);
+}
+
+.cal-x-step.active {
+    color: var(--warning);
+}
+
+.cal-x-step.done {
+    color: var(--success);
+}
+
+.cal-x-step-num {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .65rem;
+    font-weight: 700;
+    transition: all var(--transition-fast);
+}
+
+.cal-x-step.active .cal-x-step-num {
+    background: rgba(245, 158, 11, .2);
+    border-color: var(--warning);
+    color: var(--warning);
+}
+
+.cal-x-step.done .cal-x-step-num {
+    background: rgba(16, 185, 129, .2);
+    border-color: var(--success);
+    color: var(--success);
+}
+
+.cal-x-step-arrow {
+    font-size: .75rem;
+    color: var(--text-tertiary);
+    flex: 1;
+    text-align: center;
+}
+
+.cal-x-result {
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(16, 185, 129, .08);
+    border: 1px solid rgba(16, 185, 129, .2);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
 /* Measure Panel */
 .measure-panel {
     padding: 0 var(--space-lg) var(--space-lg);
@@ -807,6 +899,25 @@ body::before {
     border: 1px solid rgba(16, 185, 129, .2);
 }
 
+/* X-Kalibrasyon canvas overlay */
+.image-canvas-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+}
+
+.xcal-overlay-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* tıklamalar img'ye geçsin */
+    z-index: 3;
+}
+
 .image-panel img {
     max-width: 100%;
     max-height: 100%;
@@ -837,6 +948,16 @@ body::before {
 
 .image-panel.calibrating img {
     cursor: crosshair;
+}
+
+/* X-kalibrasyon tıklama modu cursor'ı */
+.image-panel.xcal-active img,
+.image-panel.xcal-active .image-canvas-wrapper {
+    cursor: col-resize;
+}
+
+.image-panel.xcal-active {
+    outline: 2px solid rgba(245, 158, 11, 0.4);
 }
 
 /* Parameters */

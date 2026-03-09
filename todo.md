@@ -13,7 +13,11 @@ Bu belge, projenin yeteneklerini bir prototipten endüstri standardı bir **CMM 
   - Her bölüm (D1, D2, L1...) için `±0.05 mm` gibi alt/üst tolerans sınırları girilebiliyor.
   - Ölçüm sonucunda tablonun tolerans içindekileri **Yeşil (Pass)**, dışındakileri **Kırmızı (Fail - Iskarta)** olarak renklendiriyor. Ayrıca bu renkler Excel ve PDF raporlarında da çıkıyor.
 
-### 2. Kamera Lens Distorsiyonu (Bozulma) Düzeltmesi
+### 2. PDF Çıktı Tasarımı ve Türkçe Font Destekleri ✅ **[TAMAMLANDI v4.8]**
+- **Sorun:** Rapor çıktılarındaki `ı, ş, ğ` gibi harfler bozuk çıkabiliyordu ve tasarım sönüktü.
+- **Çözüm:** Roboto font ailesi projeye entegre edildi ve PDF şablonu baştan aşağı "Endüstriyel Kalite Kontrol (CMM)" formatına taşınarak PASS/FAIL rozet (badge) sistemine geçirildi.
+
+### 3. Kamera Lens Distorsiyonu (Bozulma) Düzeltmesi
 - **Sorun:** Kameraların veya alınan lenslerin fiziksel eğriliğinden (fıçı / yastık distorsiyonu) dolayı parçanın merkezindeki piksel genişliği ile köşesindeki genişlik aynı değildir. (Şu anki x_scale düzeltmeniz buna sadece bant aid yapıyor).
 - **Çözüm:** 
   - OpenCV'nin Satranç Tahtası (Checkerboard) Camera Calibration fonksiyonelliğinin bir sekmeye eklenmesi. Kamera matrisi (Intrinsic) ve bozulma katsayılarının bulunarak sisteme entegre edilmesi ve fotoğraf yüklenir yüklenmez ilk olarak görselin `cv2.undistort` ile **düzeltilmiş gerçeğe (rectified)** dönüştürülmesi.

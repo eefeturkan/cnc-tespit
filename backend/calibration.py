@@ -26,19 +26,23 @@ class CalibrationProfile:
 
     def __init__(self, pixels_per_mm: float = 1.0, reference_diameter_mm: float = 0.0,
                  reference_pixels: float = 0.0, name: str = "default",
-                 pixels_per_mm_x: float = None, pixels_per_mm_y: float = None):
+                 pixels_per_mm_x: float = None, pixels_per_mm_y: float = None,
+                 x_user_calibrated: bool = False):
         self.name = name
         self.pixels_per_mm = pixels_per_mm
         self.reference_diameter_mm = reference_diameter_mm
         self.reference_pixels = reference_pixels
         # Y-ekseni (dikey/çap) oranı
         self.pixels_per_mm_y = pixels_per_mm_y if pixels_per_mm_y is not None else pixels_per_mm
-        # X-ekseni (yatay/uzunluk) oranı — otomatik hesaplanır
+        # X-ekseni (yatay/uzunluk) oranı
         if pixels_per_mm_x is not None:
             self.pixels_per_mm_x = pixels_per_mm_x
+            # Eğer x_user_calibrated açıkça belirtilmemişse, değer verilmişse True say
+            self._x_user_calibrated = x_user_calibrated or True
         else:
-            # Sabit 1024x647 görüntü boyutu düzeltmesi
+            # Fallback: ASPECT_CORRECTION_FACTOR kullan — kullanıcı henüz kalibre etmedi
             self.pixels_per_mm_x = self.pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
+            self._x_user_calibrated = False
 
     def pixels_to_mm(self, pixels: float) -> float:
         """Piksel değerini mm'ye çevir (geriye uyumluluk — Y ekseni)."""
@@ -54,24 +58,34 @@ class CalibrationProfile:
 
     def pixels_to_mm_x(self, pixels: float) -> float:
         """X-ekseni (yatay) piksel değerini mm'ye çevir — uzunluk ölçümü için."""
-        if self.pixels_per_mm_x <= 0:
+        if self.pixels_per_mm_x is None or self.pixels_per_mm_x <= 0:
+            # X kalibrasyonu yapılmamışsa fallback: Y kalibrasyonunu kullan
+            if self.pixels_per_mm_y and self.pixels_per_mm_y > 0:
+                return pixels / self.pixels_per_mm_y
             return 0.0
         return pixels / self.pixels_per_mm_x
+
+    @property
+    def x_is_calibrated(self) -> bool:
+        """X-ekseninin kullanıcı tarafından bağımsız olarak kalibre edilip edilmediğini döndür."""
+        return self._x_user_calibrated
 
     def mm_to_pixels(self, mm: float) -> float:
         """mm değerini piksele çevir."""
         return mm * self.pixels_per_mm
 
     def set_x_calibration(self, pixels_per_mm_x: float):
-        """X-ekseni kalibrasyonunu ayrıca ayarla."""
+        """X-ekseni kalibrasyonunu kullanıcı tarafından ayarla."""
         self.pixels_per_mm_x = pixels_per_mm_x
+        self._x_user_calibrated = True
 
     def set_y_calibration(self, pixels_per_mm_y: float):
-        """Y-ekseni kalibrasyonunu ayarla ve X-eksenini otomatik hesapla."""
+        """Y-ekseni kalibrasyonunu ayarla. X-ekseni kullanıcı kalibrasyonu korunur."""
         self.pixels_per_mm_y = pixels_per_mm_y
         self.pixels_per_mm = pixels_per_mm_y  # Geriye uyumluluk
-        # X-eksenini otomatik güncelle
-        self.pixels_per_mm_x = pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
+        # X kullanıcı tarafından kalibre edilmemişse fallback'i güncelle
+        if not self._x_user_calibrated:
+            self.pixels_per_mm_x = pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
 
     def to_dict(self) -> dict:
         return {
@@ -79,6 +93,7 @@ class CalibrationProfile:
             "pixels_per_mm": self.pixels_per_mm,
             "pixels_per_mm_x": self.pixels_per_mm_x,
             "pixels_per_mm_y": self.pixels_per_mm_y,
+            "x_user_calibrated": self._x_user_calibrated,
             "reference_diameter_mm": self.reference_diameter_mm,
             "reference_pixels": self.reference_pixels,
         }
@@ -86,8 +101,11 @@ class CalibrationProfile:
     @classmethod
     def from_dict(cls, data: dict) -> "CalibrationProfile":
         ppmm = data.get("pixels_per_mm", 1.0)
-        # pixels_per_mm_x kayıtlıysa onu kullan, yoksa otomatik hesaplansın (None)
         ppmm_x = data.get("pixels_per_mm_x", None)
+        x_user_cal = data.get("x_user_calibrated", False)
+        # Eski profil dosyasında x_user_calibrated yoksa: ppmm_x varsa True say
+        if ppmm_x is not None and not x_user_cal:
+            x_user_cal = data.get("x_user_calibrated", True)
         return cls(
             pixels_per_mm=ppmm,
             reference_diameter_mm=data.get("reference_diameter_mm", 0.0),
@@ -95,6 +113,7 @@ class CalibrationProfile:
             name=data.get("name", "default"),
             pixels_per_mm_x=ppmm_x,
             pixels_per_mm_y=data.get("pixels_per_mm_y", ppmm),
+            x_user_calibrated=x_user_cal,
         )
 
 

@@ -18,24 +18,57 @@ from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
 )
 from reportlab.pdfgen import canvas as pdfcanvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
+# ===================================================================
+# Font Tanımlamaları (Türkçe Karakter Desteği için)
+# ===================================================================
+import os
+font_dir = Path(__file__).parent / "assets" / "fonts"
+try:
+    pdfmetrics.registerFont(TTFont('Roboto', str(font_dir / 'Roboto-Regular.ttf')))
+    pdfmetrics.registerFont(TTFont('Roboto-Bold', str(font_dir / 'Roboto-Bold.ttf')))
+    DEFAULT_FONT = 'Roboto'
+    BOLD_FONT = 'Roboto-Bold'
+except Exception as e:
+    print(f"Uyarı: Roboto fontu yüklenemedi, Helvetica kullanılacak. Hata: {e}")
+    DEFAULT_FONT = 'Helvetica'
+    BOLD_FONT = 'Helvetica-Bold'
 
 # ===================================================================
 # Renkler
 # ===================================================================
-DARK_BG = HexColor("#0a0e14")
-HEADER_BG = HexColor("#1a2230")
-ACCENT = HexColor("#3b82f6")
-ROW_ALT = HexColor("#111820")
-TEXT_PRIMARY = HexColor("#e8edf4")
-TEXT_SECONDARY = HexColor("#8b99ad")
-SUCCESS = HexColor("#10b981")
-BORDER_COLOR = HexColor("#2a3444")
+DARK_BG = HexColor("#0f172a") # Slate 900
+HEADER_BG = HexColor("#1e293b") # Slate 800
+ACCENT = HexColor("#2563eb") # Blue 600
+ROW_ALT = HexColor("#f8fafc") # Slate 50
+TEXT_PRIMARY = HexColor("#0f172a")
+TEXT_SECONDARY = HexColor("#64748b")
+SUCCESS = HexColor("#16a34a") # Green 600
+DANGER = HexColor("#dc2626") # Red 600
+BORDER_COLOR = HexColor("#cbd5e1") # Slate 300
 
+# ===================================================================
+# PDF Base Header/Footer Canvas
+# ===================================================================
+def create_report_canvas(canvas, doc):
+    canvas.saveState()
+    # Footer
+    canvas.setFont(DEFAULT_FONT, 8)
+    canvas.setFillColor(TEXT_SECONDARY)
+    canvas.drawString(15*mm, 10*mm, "NEXORA® CNC Kalite Kontrol Sistemi")
+    canvas.drawRightString(200*mm, 10*mm, f"Sayfa {doc.page}")
+    
+    # Header Line
+    canvas.setStrokeColor(BORDER_COLOR)
+    canvas.setLineWidth(0.5)
+    canvas.line(15*mm, 285*mm, 200*mm, 285*mm)
+    canvas.restoreState()
 
 # ===================================================================
 # PDF Rapor
@@ -57,28 +90,30 @@ def generate_pdf_report(
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
         leftMargin=15 * mm, rightMargin=15 * mm,
-        topMargin=20 * mm, bottomMargin=20 * mm,
+        topMargin=25 * mm, bottomMargin=20 * mm,
     )
 
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "ReportTitle", parent=styles["Title"],
-        fontSize=18, textColor=ACCENT, spaceAfter=4 * mm,
-        fontName="Helvetica-Bold",
+        fontSize=20, textColor=DARK_BG, spaceAfter=2 * mm,
+        fontName=BOLD_FONT, alignment=TA_LEFT
     )
     subtitle_style = ParagraphStyle(
         "Subtitle", parent=styles["Normal"],
         fontSize=10, textColor=TEXT_SECONDARY,
-        spaceAfter=6 * mm,
+        spaceAfter=8 * mm, fontName=DEFAULT_FONT, alignment=TA_LEFT
     )
     section_style = ParagraphStyle(
         "SectionTitle", parent=styles["Heading2"],
-        fontSize=12, textColor=ACCENT, spaceBefore=6 * mm,
-        spaceAfter=3 * mm, fontName="Helvetica-Bold",
+        fontSize=13, textColor=HEADER_BG, spaceBefore=8 * mm,
+        spaceAfter=4 * mm, fontName=BOLD_FONT,
+        borderPadding=(0,0,2,0),
+        borderColor=ACCENT, borderWidth=1 # Alt Çizgi
     )
     normal_style = ParagraphStyle(
         "NormalText", parent=styles["Normal"],
-        fontSize=9, textColor=black,
+        fontSize=10, textColor=TEXT_PRIMARY, fontName=DEFAULT_FONT
     )
 
     elements = []
@@ -165,12 +200,15 @@ def generate_pdf_report(
         # Sütun endeksleri: ID=0, Tip=1, Açıklama=2, Ölçülen=3, Hedef=4, Tolerans=5, Durum=6
         current_row_idx = idx + 1 # Başlık satırından sonra
         
+        # Rozet (Badge) Görünümü
         if status == "PASS":
-            pass_fail_styles.append(("TEXTCOLOR", (6, current_row_idx), (6, current_row_idx), HexColor("#16a34a")))
-            pass_fail_styles.append(("FONTNAME", (6, current_row_idx), (6, current_row_idx), "Helvetica-Bold"))
+            pass_fail_styles.append(("BACKGROUND", (6, current_row_idx), (6, current_row_idx), SUCCESS))
+            pass_fail_styles.append(("TEXTCOLOR", (6, current_row_idx), (6, current_row_idx), white))
+            pass_fail_styles.append(("FONTNAME", (6, current_row_idx), (6, current_row_idx), BOLD_FONT))
         elif status == "FAIL":
-            pass_fail_styles.append(("TEXTCOLOR", (6, current_row_idx), (6, current_row_idx), HexColor("#dc2626")))
-            pass_fail_styles.append(("FONTNAME", (6, current_row_idx), (6, current_row_idx), "Helvetica-Bold"))
+            pass_fail_styles.append(("BACKGROUND", (6, current_row_idx), (6, current_row_idx), DANGER))
+            pass_fail_styles.append(("TEXTCOLOR", (6, current_row_idx), (6, current_row_idx), white))
+            pass_fail_styles.append(("FONTNAME", (6, current_row_idx), (6, current_row_idx), BOLD_FONT))
 
     # Yeni genişlik (A4: 190 mm)
     col_widths = [12 * mm, 15 * mm, 55 * mm, 25 * mm, 20 * mm, 20 * mm, 20 * mm]
@@ -178,21 +216,23 @@ def generate_pdf_report(
 
     # Tablo stili
     table_style_cmds = [
-        ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
+        ("BACKGROUND", (0, 0), (-1, 0), HEADER_BG), # Koyu başlık
         ("TEXTCOLOR", (0, 0), (-1, 0), white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("FONTNAME", (0, 0), (-1, 0), BOLD_FONT),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("GRID", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
         ("ALIGN", (3, 1), (6, -1), "CENTER"), # Tüm sayısal kolonları sınırla
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), # Hücre içi dikey hizalama
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("FONTNAME", (0, 1), (-1, -1), DEFAULT_FONT) # Gövde metinleri
     ]
     # Satır renklendirme
     for i in range(1, len(table_data)):
         if i % 2 == 0:
-            table_style_cmds.append(("BACKGROUND", (0, i), (-1, i), HexColor("#f5f5f5")))
+            table_style_cmds.append(("BACKGROUND", (0, i), (-1, i), ROW_ALT))
 
     table_style_cmds.extend(pass_fail_styles)
     measure_table.setStyle(TableStyle(table_style_cmds))
@@ -218,15 +258,14 @@ def generate_pdf_report(
         except Exception:
             pass
 
-    # Altbilgi
+    # Altbilgi (Artık create_report_canvas yapıyor ama boşluk veriyoruz)
     elements.append(Spacer(1, 10 * mm))
-    footer_style = ParagraphStyle(
-        "Footer", parent=styles["Normal"],
-        fontSize=7, textColor=TEXT_SECONDARY, alignment=TA_CENTER,
-    )
-    elements.append(Paragraph("CNC Parça Ölçüm Sistemi v2.0 — Otomatik Rapor", footer_style))
 
-    doc.build(elements)
+    doc.build(
+        elements,
+        onFirstPage=create_report_canvas,
+        onLaterPages=create_report_canvas
+    )
     pdf_bytes = buf.getvalue()
 
     if output_path:

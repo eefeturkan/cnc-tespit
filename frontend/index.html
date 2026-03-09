@@ -161,20 +161,69 @@
                                     Et</button>
                             </div>
 
-                            <!-- Kalibrasyon sonucu -->
+                            <!-- Kalibrasyon sonucu (Y-ekseni) -->
                             <div class="cal-result hidden" id="cal-result">
-                                <div class="cal-result-header">✅ Kalibrasyon Aktif</div>
+                                <div class="cal-result-header">✅ Y-Ekseni (Çap) Kalibre</div>
                                 <div class="cal-result-value">
                                     <span>Piksel/mm (Çap/Y):</span>
                                     <strong id="cal-result-ppmm">—</strong>
                                 </div>
                                 <div class="cal-result-value">
                                     <span>Piksel/mm (Boy/X):</span>
-                                    <strong id="cal-result-ppmm-x">—</strong>
+                                    <strong id="cal-result-ppmm-x">henüz kalibre edilmedi</strong>
                                 </div>
                                 <div class="cal-result-value">
-                                    <span>1 mm =</span>
+                                    <span>1 mm (Y) =</span>
                                     <strong id="cal-result-px">— px</strong>
+                                </div>
+                            </div>
+
+                            <!-- X-Ekseni (Uzunluk) Kalibrasyonu -->
+                            <div class="cal-x-section hidden" id="cal-x-section">
+                                <div class="cal-x-header">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                                    X-Ekseni Uzunluk Kalibrasyonu
+                                </div>
+                                <p class="cal-hint" id="cal-x-hint-text">Bilinen uzunluktaki bir bölümün <strong>sol</strong> kenarına tıklayın (1. nokta).</p>
+                                <div class="cal-x-step-indicator">
+                                    <div class="cal-x-step active" id="cal-x-step-1">
+                                        <span class="cal-x-step-num">1</span> Sol Kenar
+                                    </div>
+                                    <div class="cal-x-step-arrow">→</div>
+                                    <div class="cal-x-step" id="cal-x-step-2">
+                                        <span class="cal-x-step-num">2</span> Sağ Kenar
+                                    </div>
+                                </div>
+                                <div class="cal-points-display">
+                                    <div class="cal-point">
+                                        <span class="cal-point-label">Sol Kenar (x):</span>
+                                        <span class="cal-point-value" id="cal-x1">—</span>
+                                    </div>
+                                    <div class="cal-point">
+                                        <span class="cal-point-label">Sağ Kenar (x):</span>
+                                        <span class="cal-point-value" id="cal-x2">—</span>
+                                    </div>
+                                    <div class="cal-point">
+                                        <span class="cal-point-label">Uzunluk (px):</span>
+                                        <span class="cal-point-value cal-highlight" id="cal-x-dist">— px</span>
+                                    </div>
+                                </div>
+                                <div class="param-group">
+                                    <label class="param-label">Gerçek Uzunluk (mm)</label>
+                                    <input type="number" class="param-input" id="cal-x-reference-mm"
+                                        placeholder="örn: 18.90" step="0.01" min="0.01">
+                                </div>
+                                <div style="display:flex; gap:8px;">
+                                    <button class="btn-apply btn-calibrate" id="btn-calibrate-x" disabled style="flex:1;">X-Eksenini Kalibre Et</button>
+                                    <button class="btn-apply" id="btn-x-reset" title="Yeniden kalibre et" style="width:36px; padding:0; flex-shrink:0;">↺</button>
+                                </div>
+                                <!-- X Kalibrasyon sonucu -->
+                                <div class="cal-x-result hidden" id="cal-x-result">
+                                    <div class="cal-result-header" style="color: var(--accent-secondary);">✅ X-Ekseni Kalibre</div>
+                                    <div class="cal-result-value">
+                                        <span>Piksel/mm (Boy/X):</span>
+                                        <strong id="cal-x-result-ppmm">—</strong>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -245,15 +294,20 @@
 
                     <div class="image-panel original-panel hidden" id="original-panel">
                         <span class="image-panel-label original">Orijinal</span>
-                        <canvas id="original-canvas" style="display:none;"></canvas>
-                        <img id="original-image" src="" alt="Orijinal görüntü">
+                        <div class="image-canvas-wrapper">
+                            <img id="original-image" src="" alt="Orijinal görüntü">
+                            <canvas id="original-xcal-canvas" class="xcal-overlay-canvas"></canvas>
+                        </div>
                     </div>
 
                     <div class="image-divider hidden" id="image-divider"></div>
 
                     <div class="image-panel processed-panel hidden" id="processed-panel">
                         <span class="image-panel-label processed">İşlenmiş</span>
-                        <img id="processed-image" src="" alt="İşlenmiş görüntü">
+                        <div class="image-canvas-wrapper">
+                            <img id="processed-image" src="" alt="İşlenmiş görüntü">
+                            <canvas id="processed-xcal-canvas" class="xcal-overlay-canvas"></canvas>
+                        </div>
                     </div>
 
                     <div class="loading-overlay" id="loading-overlay">

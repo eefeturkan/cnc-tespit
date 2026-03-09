@@ -4,6 +4,51 @@
 
 ---
 
+## [v4.10] — 2026-03-09
+
+### scipy Eksikliği + X Kalibrasyon Görsel Geri Bildirim
+
+- **Sorun 1:** `No module named 'scipy'` hatası — ölçüm tamamen duruyordu.
+- **Çözüm 1:** `scipy` paketi sanal ortama kuruldu.
+- **Sorun 2:** X-ekseni kalibrasyon modunda görüntüye tıklarken kullanıcı nereye bastığını göremiyordu.
+- **Çözüm 2:**
+  - Her iki görüntü paneline (orijinal + işlenmiş) şeffaf canvas overlay eklendi (`.xcal-overlay-canvas`).
+  - 1. tıklamada sarı kesikli dikey çizgi + "X1" etiketi, 2. tıklamada turuncu "X2" çizgisi çiziliyor.
+  - İki nokta seçilince arası sarı yarı-saydam bant ve piksel mesafe etiketi gösteriliyor.
+  - X-kalibrasyon modu aktifken image panel'leri turuncu outline alıyor ve cursor `col-resize` oluyor.
+  - Sekme değişince veya sıfırlanınca canvas temizleniyor; kalibrasyon sekmesine dönünce işaretler yeniden çiziliyor.
+
+---
+
+## [v4.9] — 2026-03-09
+
+### X-Ekseni (Uzunluk) Gerçek Kalibrasyon UI
+
+- **Sorun:** Uzunluk ölçümleri, Y-ekseni (çap) kalibrasyonundan türetilen sabit bir `ASPECT_CORRECTION_FACTOR = 1.2762` ile hesaplanıyordu. Bu faktör tek bir ölçümden alınmış ve tüm görüntülere uygulanıyordu; farklı kameralar veya farklı kırpma oranlarında yanlış uzunluk sonuçları veriyordu.
+- **Çözüm:**
+  - Kalibrasyon sekmesine **X-Ekseni Uzunluk Kalibrasyonu** bölümü eklendi.
+  - Y-ekseni kalibrasyonu tamamlandıktan sonra bu bölüm otomatik açılır.
+  - Kullanıcı görüntü üzerindeki bilinen uzunlukta bir bölümün **sol kenarına** (1. tık), ardından **sağ kenarına** (2. tık) tıklar.
+  - Gerçek uzunluk mm olarak girilip "X-Eksenini Kalibre Et" butonuna basılır.
+  - Adım adım görsel durum göstergesi (1 → 2 tık akışı) ve ↺ sıfırlama butonu eklendi.
+- **Backend:** `CalibrationProfile`'a `_x_user_calibrated` flag'i eklendi; `set_x_calibration()` çağrıldığında X kullanıcı kalibrasyonu olarak işaretlenir, `set_y_calibration()` artık kullanıcı kalibre etmişse X değerini ezmez.
+- **Uyarı:** Ölçüm yapılırken X ekseni kalibre edilmemişse "X-ekseni kalibre edilmedi — uzunluk ölçümleri yaklaşık olacak" uyarısı gösterilir.
+- **API:** `/api/measure` yanıtına `x_calibrated: bool` alanı eklendi.
+
+---
+
+## [v4.8] — 2026-03-06
+
+### PDF CMM Tasarımı ve Türkçe Font (UTF-8) Modülü 
+- **Sorun:** PDF çıktılarında `ı, ş, ğ` harfleri bozuk görünüyordu ve rapor düz metin hissi veriyordu.
+- **Çözüm:** 
+  - Proje kaynak koduna `Roboto` TrueType (TTF) fontu çekilerek `ReportLab` eklentisine kurumsal font gömüldü.
+  - Endüstriyel Kalite Kontrol (CMM / Zeiss) makine formlarında profesyonel bir PDF Header / Footer çizildi. 
+  - Ölçüm tablosundaki PASS/FAIL değerlerine kırmızı/yeşil Arkaplanlı rozet (Badge) tasarımı giydirilerek metin renkleri beyaza çekildi. Böylece daha okunabilir profesyonel bir PDF çıktısı sağlandı.
+  - Her PDF sayfasına `NEXORA®` marka ismi ve "Sayfa 1 / 1" numerikleri işlendi.
+
+---
+
 ## [v4.7] — 2026-03-05
 
 ### Tolerans Yönetimi ve Referans Parça Uygunluğu (Pass/Fail)

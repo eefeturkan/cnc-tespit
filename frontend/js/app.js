@@ -9,12 +9,17 @@ const state = {
     viewMode: 'split',
     // Algorithm result
     processedImageId: null, // Algoritma uygulanmış görüntünün disk ID'si
-    // Calibration
+    // Calibration — Y ekseni (çap)
     calMode: 'auto', // 'auto' or 'manual'
     isCalibrating: false,
     calibrated: false,
     pixelsPerMm: 1.0,
     detectedEdges: null, // {top_y, bottom_y, click_x, pixel_distance}
+    // Calibration — X ekseni (uzunluk)
+    xCalState: 'idle',    // 'idle' | 'first_click' | 'second_click'
+    xCalPoints: { x1: null, x2: null },
+    xCalibrated: false,
+    pixelsPerMmX: null,
     // Measurement
     lastMeasurementTable: null,
     lastSummary: null,
@@ -78,6 +83,22 @@ function cacheDom() {
     DOM.btnDownloadImage = document.getElementById('btn-download-image');
     DOM.btnDownloadPdf = document.getElementById('btn-download-pdf');
     DOM.btnDownloadExcel = document.getElementById('btn-download-excel');
+    // X-Ekseni Kalibrasyon
+    DOM.calXSection = document.getElementById('cal-x-section');
+    DOM.calX1 = document.getElementById('cal-x1');
+    DOM.calX2 = document.getElementById('cal-x2');
+    DOM.calXDist = document.getElementById('cal-x-dist');
+    DOM.calXReferenceMm = document.getElementById('cal-x-reference-mm');
+    DOM.btnCalibrateX = document.getElementById('btn-calibrate-x');
+    DOM.calXResult = document.getElementById('cal-x-result');
+    DOM.calXResultPpmm = document.getElementById('cal-x-result-ppmm');
+    DOM.calXHintText = document.getElementById('cal-x-hint-text');
+    DOM.calXStep1 = document.getElementById('cal-x-step-1');
+    DOM.calXStep2 = document.getElementById('cal-x-step-2');
+    DOM.btnXReset = document.getElementById('btn-x-reset');
+    // X-kalibrasyon canvas overlay'leri
+    DOM.originalXCalCanvas = document.getElementById('original-xcal-canvas');
+    DOM.processedXCalCanvas = document.getElementById('processed-xcal-canvas');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -219,6 +240,14 @@ function resetOverlays(activeTabId) {
         DOM.processedImage.src = state.imageUrl;
     }
 
+    // X-kalibrasyon canvas'ını temizle (ölçüm/algoritma sekmesine geçince)
+    if (activeTabId !== 'tab-calibration') {
+        clearXCalCanvas();
+    } else if (state.xCalPoints.x1 !== null) {
+        // Kalibrasyon sekmesine dönülünce işaretleri yeniden çiz
+        setTimeout(drawXCalMarkers, 100);
+    }
+
     // Başlık ve etiketleri tab'a uygun sıfırla
     if (activeTabId === 'tab-algorithms') {
         if (state.selectedAlgorithm) {
@@ -324,9 +353,10 @@ async function handleFile(file) {
         DOM.imageInfoText.textContent = `${r.width}×${r.height} • ${r.size_kb} KB`;
         DOM.originalImage.src = r.url; DOM.processedImage.src = r.url;
         showImagePanels();
-        // Reset edges
+        // Reset edges + X-cal canvas
         state.detectedEdges = null;
         resetEdgeDisplay();
+        clearXCalCanvas();
         updateCalibrationHint();
         showToast(`${r.filename} yüklendi`, 'success');
         if (state.selectedAlgorithm) await applyAlgorithm();
@@ -405,10 +435,40 @@ function setupCalibration() {
             showToast(`Manuel kalibrasyon: ${r.pixels_per_mm.toFixed(2)} px/mm`, 'success');
         } catch (err) { showToast(err.message, 'error'); }
     });
+
+    // X-Ekseni sıfırla (yeniden kalibre)
+    DOM.btnXReset.addEventListener('click', () => {
+        resetXCalibration();
+        showToast('X-kalibrasyon sıfırlandı, sol kenara tıklayın', 'info');
+    });
+
+    // X-Ekseni kalibre et butonu
+    DOM.btnCalibrateX.addEventListener('click', async () => {
+        const mm = parseFloat(DOM.calXReferenceMm.value);
+        if (!mm || mm <= 0) { showToast('Geçerli bir uzunluk değeri girin', 'warning'); return; }
+        if (state.xCalPoints.x1 === null || state.xCalPoints.x2 === null) {
+            showToast('Önce iki nokta seçin', 'warning'); return;
+        }
+        try {
+            const r = await fetch('/api/calibrate/x-axis', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    reference_length_mm: mm,
+                    x1: state.xCalPoints.x1,
+                    x2: state.xCalPoints.x2,
+                }),
+            });
+            if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'X-kalibrasyon başarısız'); }
+            const data = await r.json();
+            setXCalibrationResult(data.pixels_per_mm_x, data.pixels_per_mm_y);
+            showToast(`X-Ekseni kalibre: ${data.pixels_per_mm_x.toFixed(2)} px/mm`, 'success');
+        } catch (err) { showToast(err.message, 'error'); }
+    });
 }
 
 async function handleAutoEdgeClick(e) {
-    if (!state.isCalibrating || !state.imageId) return;
+    if (!state.imageId) return;
 
     // Tıklanan görseli belirle: processed veya original
     const isProcessedClick = (e.currentTarget === DOM.processedImage);
@@ -418,6 +478,15 @@ async function handleAutoEdgeClick(e) {
     const scaleY = refImg.naturalHeight / rect.height;
     const clickX = Math.round((e.clientX - rect.left) * scaleX);
     const clickY = Math.round((e.clientY - rect.top) * scaleY);
+
+    // X-Ekseni kalibrasyon modu (uzunluk) — sadece X koordinatı alınır
+    if (state.xCalState !== 'idle') {
+        handleXCalClick(clickX);
+        return;
+    }
+
+    // Y-Ekseni kalibrasyon modu (çap) — kenar tespiti yapılır
+    if (!state.isCalibrating) return;
 
     // Hangi image_id kullanılacak:
     // Algoritma uygulanmışsa işlenmiş görselin ID'si, aksi halde orijinal
@@ -452,6 +521,48 @@ async function handleAutoEdgeClick(e) {
     }
 }
 
+function setXCalActiveStyle(active) {
+    DOM.originalPanel.classList.toggle('xcal-active', active);
+    DOM.processedPanel.classList.toggle('xcal-active', active);
+}
+
+function handleXCalClick(clickX) {
+    if (state.xCalState === 'first_click') {
+        // 1. nokta alındı
+        state.xCalPoints.x1 = clickX;
+        state.xCalPoints.x2 = null;
+        state.xCalState = 'second_click';
+
+        DOM.calX1.textContent = `${clickX} px`;
+        DOM.calX2.textContent = '—';
+        DOM.calXDist.textContent = '— px';
+        DOM.btnCalibrateX.disabled = true;
+
+        DOM.calXStep1.classList.add('done');
+        DOM.calXStep2.classList.add('active');
+        DOM.calXHintText.textContent = 'Şimdi sağ kenara tıklayın (2. nokta).';
+
+        drawXCalMarkers();
+        showToast(`Sol kenar (X1): x=${clickX} px`, 'info');
+    } else if (state.xCalState === 'second_click') {
+        // 2. nokta alındı
+        state.xCalPoints.x2 = clickX;
+        state.xCalState = 'idle'; // Tıklama modunu kapat
+
+        const dist = Math.abs(clickX - state.xCalPoints.x1);
+        DOM.calX2.textContent = `${clickX} px`;
+        DOM.calXDist.textContent = `${dist} px`;
+
+        DOM.calXStep2.classList.add('done');
+        DOM.btnCalibrateX.disabled = false;
+        DOM.calXHintText.textContent = 'İki nokta seçildi. Gerçek uzunluğu girin ve kalibre edin.';
+
+        drawXCalMarkers();
+        setXCalActiveStyle(false); // 2. nokta alındı, tıklama modu kapandı
+        showToast(`Sağ kenar (X2): x=${clickX} px | Mesafe: ${dist} px`, 'success');
+    }
+}
+
 function resetEdgeDisplay() {
     DOM.calTopEdge.textContent = '—';
     DOM.calBottomEdge.textContent = '—';
@@ -462,13 +573,151 @@ function resetEdgeDisplay() {
 function setCalibrationResult(ppmm) {
     state.calibrated = true;
     state.pixelsPerMm = ppmm;
-    const ppmmX = ppmm / 1.2762;  // Otomatik X düzeltmesi (sabit 1024x647 görüntü)
     DOM.calResult.classList.remove('hidden');
     DOM.calResultPpmm.textContent = ppmm.toFixed(4);
-    DOM.calResultPpmmX.textContent = ppmmX.toFixed(4);
+    // X henüz kalibre edilmediyse "bekliyor" göster, edilmişse güncel değeri göster
+    if (state.xCalibrated) {
+        DOM.calResultPpmmX.textContent = state.pixelsPerMmX ? state.pixelsPerMmX.toFixed(4) : 'henüz kalibre edilmedi';
+    } else {
+        DOM.calResultPpmmX.textContent = 'henüz kalibre edilmedi';
+    }
     DOM.calResultPx.textContent = `${ppmm.toFixed(2)} px`;
     DOM.calibrationBadge.classList.add('visible', 'calibrated');
-    DOM.calibrationStatus.textContent = `${ppmm.toFixed(2)} px/mm`;
+    DOM.calibrationStatus.textContent = `Y:${ppmm.toFixed(2)} px/mm`;
+    // Y kalibrasyonundan sonra X-kalibrasyon bölümünü göster
+    DOM.calXSection.classList.remove('hidden');
+    // X-kalibrasyon tıklama modunu etkinleştir
+    state.xCalState = 'first_click';
+    DOM.calXStep1.classList.remove('done');
+    DOM.calXStep2.classList.remove('active', 'done');
+    DOM.calXHintText.textContent = 'Bilinen uzunluktaki bir bölümün sol kenarına tıklayın (1. nokta).';
+    setXCalActiveStyle(true);
+}
+
+function setXCalibrationResult(ppmmX, ppmmY) {
+    state.xCalibrated = true;
+    state.pixelsPerMmX = ppmmX;
+    // Y sonuç kutusundaki X satırını güncelle
+    DOM.calResultPpmmX.textContent = ppmmX.toFixed(4);
+    // X sonuç kutusunu göster
+    DOM.calXResult.classList.remove('hidden');
+    DOM.calXResultPpmm.textContent = ppmmX.toFixed(4);
+    // Header'daki rozet güncelle
+    DOM.calibrationBadge.classList.add('visible', 'calibrated');
+    DOM.calibrationStatus.textContent = `Y:${(ppmmY || state.pixelsPerMm).toFixed(2)} X:${ppmmX.toFixed(2)} px/mm`;
+    // X-kalibrasyon tıklama modunu kapat
+    state.xCalState = 'idle';
+    setXCalActiveStyle(false);
+    DOM.calXHintText.textContent = 'X-ekseni kalibre edildi. Yeniden kalibre etmek için ↺ butonuna basın.';
+    DOM.btnCalibrateX.disabled = true;
+}
+
+function resetXCalibration() {
+    state.xCalState = 'first_click';
+    state.xCalPoints = { x1: null, x2: null };
+    DOM.calX1.textContent = '—';
+    DOM.calX2.textContent = '—';
+    DOM.calXDist.textContent = '— px';
+    DOM.btnCalibrateX.disabled = true;
+    DOM.calXStep1.classList.remove('done');
+    DOM.calXStep2.classList.remove('active', 'done');
+    DOM.calXHintText.textContent = 'Bilinen uzunluktaki bir bölümün sol kenarına tıklayın (1. nokta).';
+    clearXCalCanvas();
+    setXCalActiveStyle(true); // Yeniden tıklama moduna gir
+}
+
+// ─── X-Kalibrasyon Canvas Overlay ────────────────────────────────────────────
+
+function clearXCalCanvas() {
+    [DOM.originalXCalCanvas, DOM.processedXCalCanvas].forEach(canvas => {
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    });
+}
+
+function syncCanvasSize(canvas, img) {
+    // Canvas boyutunu img'nin gerçek render boyutuna eşitle
+    const rect = img.getBoundingClientRect();
+    if (rect.width === 0) return false;
+    if (canvas.width !== Math.round(rect.width) || canvas.height !== Math.round(rect.height)) {
+        canvas.width = Math.round(rect.width);
+        canvas.height = Math.round(rect.height);
+    }
+    return true;
+}
+
+function drawXCalMarkers() {
+    const pairs = [
+        { canvas: DOM.originalXCalCanvas, img: DOM.originalImage },
+        { canvas: DOM.processedXCalCanvas, img: DOM.processedImage },
+    ];
+
+    pairs.forEach(({ canvas, img }) => {
+        if (!canvas || !img || !img.naturalWidth) return;
+        if (!syncCanvasSize(canvas, img)) return;
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const scaleX = canvas.width / img.naturalWidth;
+
+        // X1 işareti (sarı dikey çizgi)
+        if (state.xCalPoints.x1 !== null) {
+            const dx1 = state.xCalPoints.x1 * scaleX;
+            ctx.save();
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 4]);
+            ctx.beginPath();
+            ctx.moveTo(dx1, 0);
+            ctx.lineTo(dx1, canvas.height);
+            ctx.stroke();
+            // Etiket
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#f59e0b';
+            ctx.font = 'bold 12px JetBrains Mono, monospace';
+            ctx.fillText('X1', dx1 + 4, 18);
+            ctx.restore();
+        }
+
+        // X2 işareti (turuncu dikey çizgi)
+        if (state.xCalPoints.x2 !== null) {
+            const dx2 = state.xCalPoints.x2 * scaleX;
+            ctx.save();
+            ctx.strokeStyle = '#fb923c';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 4]);
+            ctx.beginPath();
+            ctx.moveTo(dx2, 0);
+            ctx.lineTo(dx2, canvas.height);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#fb923c';
+            ctx.font = 'bold 12px JetBrains Mono, monospace';
+            ctx.fillText('X2', dx2 + 4, 18);
+            ctx.restore();
+
+            // X1-X2 arası renkli bant
+            if (state.xCalPoints.x1 !== null) {
+                const dx1 = state.xCalPoints.x1 * scaleX;
+                ctx.save();
+                ctx.fillStyle = 'rgba(245, 158, 11, 0.10)';
+                ctx.fillRect(
+                    Math.min(dx1, dx2), 0,
+                    Math.abs(dx2 - dx1), canvas.height
+                );
+                // Üstte mesafe etiketi
+                const midX = (dx1 + dx2) / 2;
+                const dist = Math.abs(state.xCalPoints.x2 - state.xCalPoints.x1);
+                ctx.fillStyle = '#fcd34d';
+                ctx.font = 'bold 11px JetBrains Mono, monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${dist} px`, midX, 34);
+                ctx.restore();
+            }
+        }
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -509,6 +758,10 @@ function setupMeasurement() {
 
     DOM.btnMeasure.addEventListener('click', async () => {
         if (!state.imageId) { showToast('Önce fotoğraf yükleyin', 'warning'); return; }
+        if (!state.calibrated) { showToast('Önce kalibrasyon yapın', 'warning'); return; }
+        if (!state.xCalibrated) {
+            showToast('X-ekseni kalibre edilmedi — uzunluk ölçümleri yaklaşık olacak. Kalibrasyon sekmesinde X-eksenini kalibre edin.', 'warning');
+        }
         const activeId = state.processedImageId || state.imageId;
         showLoading(true);
         try {
@@ -519,7 +772,8 @@ function setupMeasurement() {
             DOM.activeAlgoTitle.innerHTML = `Ölçüm Sonucu <span class="algo-badge">${r.summary.total_sections} bölüm</span>`;
             showImagePanels();
             renderMeasurementTable(r.measurement_table, r.summary);
-            showToast(`Ölçüm tamamlandı: ${r.summary.total_sections} bölüm tespit edildi`, 'success');
+            const xNote = r.x_calibrated ? '' : ' (X: yaklaşık)';
+            showToast(`Ölçüm tamamlandı: ${r.summary.total_sections} bölüm${xNote}`, 'success');
         } catch (err) { showToast(err.message, 'error'); }
         finally { showLoading(false); }
     });
@@ -710,6 +964,18 @@ async function init() {
     setupCalibration();
     setupMeasurement();
     setupEvents();
+
+    // Resim yüklenince canvas boyutunu eşitle ve X işaretlerini yeniden çiz
+    [DOM.originalImage, DOM.processedImage].forEach(img => {
+        img.addEventListener('load', () => {
+            if (state.xCalPoints.x1 !== null) drawXCalMarkers();
+        });
+    });
+    // Pencere resize'ında da yeniden çiz
+    window.addEventListener('resize', () => {
+        if (state.xCalPoints.x1 !== null) drawXCalMarkers();
+    });
+
     try {
         state.algorithms = await API.getAlgorithms();
         renderAlgorithmList(state.algorithms);
