@@ -178,7 +178,8 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
 
 
 def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: float = 1.0,
-                          sections: Optional[List] = None) -> np.ndarray:
+                          sections: Optional[List] = None,
+                          matched_features: Optional[List[Dict]] = None) -> np.ndarray:
     """
     Profil verilerini ve ölçüm çizgilerini görüntü üzerine çizer.
 
@@ -187,6 +188,7 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
         profile: extract_profile() çıktısı
         calibration_ppmm: Piksel/mm oranı
         sections: Bölüm bilgileri (measurement_engine çıktısı)
+        matched_features: Golden mod eşleşmiş feature listesi (opsiyonel)
     """
     overlay = image.copy()
     x_start = profile["x_start"]
@@ -251,5 +253,41 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
             for draw_x in [sx, ex]:
                 for y in range(0, overlay.shape[0], 8):
                     cv2.line(overlay, (draw_x, y), (draw_x, min(y + 4, overlay.shape[0])), (100, 100, 100), 1)
+
+    # Golden feature etiketleri (opsiyonel)
+    if matched_features:
+        for f in matched_features:
+            if not f or not f.get("found"):
+                continue
+            fid = str(f.get("id"))
+            ftype = f.get("type")
+            xs = f.get("x_start_abs")
+            xe = f.get("x_end_abs")
+            if xs is None or xe is None:
+                continue
+
+            mid_x = int(f.get("mid_x") or ((int(xs) + int(xe)) // 2))
+            label = f"{'D' if ftype == 'diameter' else 'L'}{fid.zfill(2)}"
+
+            if ftype == "diameter":
+                top_y = f.get("top_y")
+                bot_y = f.get("bottom_y")
+                if top_y is None or bot_y is None:
+                    continue
+                cv2.putText(
+                    overlay, label,
+                    (mid_x + 8, max(0, int(top_y) - 14)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                    (0, 220, 255), 2, cv2.LINE_AA
+                )
+            else:
+                # Uzunluk için segment sınırlarını hafif vurgula + etiket
+                y = overlay.shape[0] - 12
+                cv2.putText(
+                    overlay, label,
+                    (mid_x - 14, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                    (180, 255, 180), 2, cv2.LINE_AA
+                )
 
     return overlay

@@ -8,7 +8,7 @@ import os
 import uuid
 import base64
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Literal
 
 import cv2
 import numpy as np
@@ -25,7 +25,12 @@ from calibration import (
     save_profile, load_profile, list_profiles,
 )
 from profile_extractor import extract_profile, draw_profile_overlay
-from measurement_engine import detect_sections, generate_measurement_table, get_measurement_summary
+from measurement_engine import (
+    detect_sections,
+    detect_sections_golden,
+    generate_measurement_table,
+    get_measurement_summary,
+)
 from report_generator import generate_pdf_report, generate_excel_report
 
 # ---------------------------------------------------------------------------
@@ -67,6 +72,9 @@ active_calibration: CalibrationProfile = CalibrationProfile(pixels_per_mm=1.0, n
 # image_id bazlı kalibrasyon bağlama (global tek profil riskini azaltır)
 active_calibration_by_image: Dict[str, CalibrationProfile] = {}
 
+# image_id bazlı golden (referans) layout
+active_reference_layout_by_image: Dict[str, dict] = {}
+
 
 # ---------------------------------------------------------------------------
 # Modeller
@@ -89,11 +97,34 @@ class CalibrateRequest(BaseModel):
 
 class MeasureRequest(BaseModel):
     image_id: str
+    mode: Literal["auto", "golden"] = "auto"
+    reference_layout: Optional[dict] = None
     min_section_width_px: int = 20
     gradient_threshold: float = 2.0
     blur_ksize: int = 5
     morph_ksize: int = 5
     min_contour_area: int = 5000
+
+
+class ReferenceFeature(BaseModel):
+    id: str
+    type: Literal["diameter", "length"]
+    order: int
+    nominal_mm: Optional[float] = None
+    tol_minus: Optional[float] = None
+    tol_plus: Optional[float] = None
+    required: bool = True
+
+
+class ReferenceLayout(BaseModel):
+    image_id: Optional[str] = None
+    name: Optional[str] = None
+    features: List[ReferenceFeature]
+
+
+class ReferenceLayoutSetRequest(BaseModel):
+    image_id: str
+    layout: ReferenceLayout
 
 
 class ManualCalibrationRequest(BaseModel):
@@ -162,6 +193,16 @@ def _get_active_calibration(image_id: Optional[str] = None) -> CalibrationProfil
     if image_id:
         return active_calibration_by_image.get(Path(image_id).name, active_calibration)
     return active_calibration
+
+
+def _set_active_reference_layout(image_id: str, layout: dict):
+    active_reference_layout_by_image[Path(image_id).name] = layout
+
+
+def _get_active_reference_layout(image_id: Optional[str]) -> Optional[dict]:
+    if not image_id:
+        return None
+    return active_reference_layout_by_image.get(Path(image_id).name)
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +472,29 @@ async def get_calibration_profiles():
     return {"profiles": list_profiles()}
 
 
+# ---------------------------------------------------------------------------
+# Golden (Referans) Layout
+# ---------------------------------------------------------------------------
+@app.post("/api/reference-layout/set")
+async def set_reference_layout(request: ReferenceLayoutSetRequest):
+    """Verilen image_id için referans (golden) layout kaydet."""
+    if not request.image_id:
+        raise HTTPException(status_code=400, detail="image_id zorunludur")
+    layout_dict = request.layout.model_dump()
+    layout_dict["image_id"] = request.image_id
+    _set_active_reference_layout(request.image_id, layout_dict)
+    return {"ok": True, "image_id": Path(request.image_id).name, "layout": layout_dict}
+
+
+@app.get("/api/reference-layout/current")
+async def get_reference_layout_current(image_id: str):
+    """Verilen image_id için aktif referans layout döndür."""
+    layout = _get_active_reference_layout(image_id)
+    if not layout:
+        raise HTTPException(status_code=404, detail="Bu image_id için referans layout yok")
+    return {"image_id": Path(image_id).name, "layout": layout}
+
+
 @app.post("/api/calibration/load/{profile_name}")
 async def load_calibration_profile(profile_name: str, image_id: Optional[str] = None):
     """Kaydedilmiş profili yükle."""
@@ -492,19 +556,69 @@ async def measure_part(request: MeasureRequest):
             "min_contour_area": request.min_contour_area,
         })
 
+        sections = None
+        matched_features = None
+
         # 2. Bölümleri tespit et
-        sections = detect_sections(
-            profile, calibration,
-            min_section_width_px=request.min_section_width_px,
-            gradient_threshold=request.gradient_threshold,
-        )
+        if request.mode == "golden":
+            layout = request.reference_layout or _get_active_reference_layout(request.image_id)
+            if not layout:
+                raise HTTPException(status_code=400, detail="Golden ölçüm için reference_layout gerekli (veya image_id için set edilmeli)")
+            golden = detect_sections_golden(
+                profile, calibration, layout,
+                min_section_width_px=request.min_section_width_px,
+                gradient_threshold=request.gradient_threshold,
+            )
+            matched_features = golden.get("matched_features")
+            # Overlay çizimi için minimal section benzeri veri türet
+            sections = []
+            for f in matched_features or []:
+                if not f.get("found"):
+                    continue
+                if f.get("type") == "diameter":
+                    sections.append({
+                        "x_start_abs": f.get("x_start_abs"),
+                        "x_end_abs": f.get("x_end_abs"),
+                        "top_y_at_mid": f.get("top_y"),
+                        "bottom_y_at_mid": f.get("bottom_y"),
+                        "diameter_mm": f.get("measured_mm", 0),
+                        "length_mm": 0,
+                    })
+        else:
+            sections = detect_sections(
+                profile, calibration,
+                min_section_width_px=request.min_section_width_px,
+                gradient_threshold=request.gradient_threshold,
+            )
 
         # 3. Overlay çiz
-        overlay = draw_profile_overlay(img, profile, calibration.pixels_per_mm, sections)
+        overlay = draw_profile_overlay(img, profile, calibration.pixels_per_mm, sections, matched_features=matched_features)
 
         # 4. Ölçüm tablosu
-        table = generate_measurement_table(sections)
-        summary = get_measurement_summary(sections)
+        if request.mode == "golden":
+            # matched_features -> tablo satırları
+            table = []
+            for f in (matched_features or []):
+                if not f.get("found"):
+                    continue
+                row_type = "Çap" if f.get("type") == "diameter" else "Uzunluk"
+                prefix = "D" if f.get("type") == "diameter" else "L"
+                table.append({
+                    "id": f"{prefix}{str(f.get('id')).zfill(2)}",
+                    "type": row_type,
+                    "description": f"{prefix}{str(f.get('id')).zfill(2)}",
+                    "nominal_mm": f.get("nominal_mm", f.get("measured_mm", 0)),
+                    "measured_mm": float(f.get("measured_mm", 0)),
+                    "deviation_mm": 0.0,
+                    "feature_id": f.get("id"),
+                })
+            summary = {
+                "total_sections": len(table),
+                "mode": "golden",
+            }
+        else:
+            table = generate_measurement_table(sections)
+            summary = get_measurement_summary(sections)
 
         return {
             "overlay_image": f"data:image/png;base64,{_image_to_base64(overlay)}",
@@ -513,6 +627,8 @@ async def measure_part(request: MeasureRequest):
             "summary": summary,
             "calibration": calibration.to_dict(),
             "x_calibrated": calibration.x_is_calibrated,
+            "mode": request.mode,
+            "matched_features": matched_features,
         }
 
     except ValueError as e:

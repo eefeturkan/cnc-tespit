@@ -25,6 +25,7 @@ const state = {
     // Measurement
     lastMeasurementTable: null,
     lastSummary: null,
+    measureMode: 'auto', // 'auto' | 'golden'
     measureParams: {
         min_section_width_px: 20, gradient_threshold: 2.0,
         blur_ksize: 5, morph_ksize: 5, min_contour_area: 5000,
@@ -96,6 +97,10 @@ function cacheDom() {
     DOM.btnDownloadImage = document.getElementById('btn-download-image');
     DOM.btnDownloadPdf = document.getElementById('btn-download-pdf');
     DOM.btnDownloadExcel = document.getElementById('btn-download-excel');
+    // Measurement mode
+    DOM.btnMeasureModeAuto = document.getElementById('btn-measure-mode-auto');
+    DOM.btnMeasureModeGolden = document.getElementById('btn-measure-mode-golden');
+    DOM.measureModeHint = document.getElementById('measure-mode-hint');
     // X-Ekseni Kalibrasyon
     DOM.calXSection = document.getElementById('cal-x-section');
     DOM.calX1 = document.getElementById('cal-x1');
@@ -852,6 +857,23 @@ function setupMeasurement() {
         });
     });
 
+    // Mode toggle
+    if (DOM.btnMeasureModeAuto && DOM.btnMeasureModeGolden) {
+        const applyModeStyles = () => {
+            const isGolden = state.measureMode === 'golden';
+            DOM.btnMeasureModeAuto.style.background = isGolden ? '#0f172a' : '#1e293b';
+            DOM.btnMeasureModeGolden.style.background = isGolden ? '#1e293b' : '#0f172a';
+            if (DOM.measureModeHint) {
+                DOM.measureModeHint.innerHTML = isGolden
+                    ? 'Golden: sadece seçilen ID’ler (D03,D18,D04,D05,D06,D08 ve L17,L21,L22,L24) ölçülür.'
+                    : 'Auto: sistem serbest bölüm tespiti yapar (bölüm sayısı artabilir).';
+            }
+        };
+        DOM.btnMeasureModeAuto.addEventListener('click', () => { state.measureMode = 'auto'; applyModeStyles(); showToast('Ölçüm modu: Auto', 'info'); });
+        DOM.btnMeasureModeGolden.addEventListener('click', () => { state.measureMode = 'golden'; applyModeStyles(); showToast('Ölçüm modu: Golden', 'info'); });
+        applyModeStyles();
+    }
+
     DOM.btnProfile.addEventListener('click', async () => {
         if (!state.imageId) { showToast('Önce fotoğraf yükleyin', 'warning'); return; }
         const activeId = state.processedImageId || state.imageId;
@@ -875,11 +897,20 @@ function setupMeasurement() {
         const activeId = state.processedImageId || state.imageId;
         showLoading(true);
         try {
-            const r = await API.measure({ image_id: activeId, ...state.measureParams });
+            const payload = {
+                image_id: activeId,
+                mode: state.measureMode,
+                ...state.measureParams
+            };
+            if (state.measureMode === 'golden') {
+                payload.reference_layout = buildDefaultGoldenLayout(activeId);
+            }
+            const r = await API.measure(payload);
             state.lastMeasurementTable = r.measurement_table;
             state.lastSummary = r.summary;
             DOM.processedImage.src = r.overlay_image;
-            DOM.activeAlgoTitle.innerHTML = `Ölçüm Sonucu <span class="algo-badge">${r.summary.total_sections} bölüm</span>`;
+            const badge = state.measureMode === 'golden' ? 'golden' : `${r.summary.total_sections} bölüm`;
+            DOM.activeAlgoTitle.innerHTML = `Ölçüm Sonucu <span class="algo-badge">${badge}</span>`;
             showImagePanels();
             renderMeasurementTable(r.measurement_table, r.summary);
             const xNote = r.x_calibrated ? '' : ' (X: yaklaşık)';
@@ -952,6 +983,17 @@ function setupMeasurement() {
         } catch (err) { showToast(err.message, 'error'); }
         finally { showLoading(false); }
     });
+}
+
+function buildDefaultGoldenLayout(imageId) {
+    // Kullanıcı seçimi (MVP): Çap = 03,18,04,05,06,08; Uzunluk = 17,21,22,24
+    const diameters = ['03', '18', '04', '05', '06', '08'];
+    const lengths = ['17', '21', '22', '24'];
+    const features = [];
+    let order = 1;
+    diameters.forEach(id => features.push({ id, type: 'diameter', order: order++, required: true }));
+    lengths.forEach(id => features.push({ id, type: 'length', order: order++, required: true }));
+    return { image_id: imageId, name: 'default_golden', features };
 }
 
 function renderMeasurementTable(table, summary) {

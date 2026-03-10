@@ -250,6 +250,16 @@
                         <div class="sidebar-section-header">Ölçüm Parametreleri</div>
                         <div class="measure-panel">
                             <div class="param-group">
+                                <label class="param-label">Ölçüm Modu</label>
+                                <div style="display:flex; gap:8px;">
+                                    <button class="btn-apply" id="btn-measure-mode-auto" style="flex:1; background:#1e293b; border:1px solid #334155; color:#e2e8f0;">Auto</button>
+                                    <button class="btn-apply" id="btn-measure-mode-golden" style="flex:1; background:#0f172a; border:1px solid #334155; color:#e2e8f0;">Golden</button>
+                                </div>
+                                <div class="cal-hint" id="measure-mode-hint" style="margin-top:6px;">
+                                    Auto: sistem serbest bölüm tespiti yapar. Golden: sadece seçilen ID’lere göre sabit ölçüm üretir.
+                                </div>
+                            </div>
+                            <div class="param-group">
                                 <label class="param-label">Min Bölüm Genişliği (px) <span class="param-value-display"
                                         id="val-min-section">20</span></label>
                                 <input type="range" id="measure-min-section" min="5" max="100" value="20" step="5">
