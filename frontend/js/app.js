@@ -40,7 +40,16 @@ const state = {
         isDragging: false,
         startX: 0,
         startY: 0
-    }
+    },
+    // Manuel Sınır Modu
+    boundaryMode: false,
+    boundaries: [],            // Mutlak x koordinatları (doğal görüntü pikseli)
+    suggestedBoundaries: [],   // /api/profile'den gelen öneriler
+    boundaryDrag: {
+        active: false,
+        index: -1,       // Sürüklenen sınırın indeksi
+        startScreenX: 0,
+    },
 };
 
 const DOM = {};
@@ -110,6 +119,8 @@ function cacheDom() {
     DOM.btnCalibrateX = document.getElementById('btn-calibrate-x');
     DOM.calXResult = document.getElementById('cal-x-result');
     DOM.calXResultPpmm = document.getElementById('cal-x-result-ppmm');
+    DOM.calXResultPxDist = document.getElementById('cal-x-result-px-dist');
+    DOM.calXResultCoords = document.getElementById('cal-x-result-coords');
     DOM.calXHintText = document.getElementById('cal-x-hint-text');
     DOM.calXStep1 = document.getElementById('cal-x-step-1');
     DOM.calXStep2 = document.getElementById('cal-x-step-2');
@@ -117,6 +128,18 @@ function cacheDom() {
     // X-kalibrasyon canvas overlay'leri
     DOM.originalXCalCanvas = document.getElementById('original-xcal-canvas');
     DOM.processedXCalCanvas = document.getElementById('processed-xcal-canvas');
+    // Manuel sınır canvas overlay'leri
+    DOM.originalBoundaryCanvas = document.getElementById('original-boundary-canvas');
+    DOM.processedBoundaryCanvas = document.getElementById('processed-boundary-canvas');
+    // Manuel sınır kontrolleri
+    DOM.btnBoundaryOff = document.getElementById('btn-boundary-off');
+    DOM.btnBoundaryOn = document.getElementById('btn-boundary-on');
+    DOM.boundaryControls = document.getElementById('boundary-controls');
+    DOM.boundaryCount = document.getElementById('boundary-count');
+    DOM.btnBoundaryClear = document.getElementById('btn-boundary-clear');
+    DOM.btnBoundaryAuto = document.getElementById('btn-boundary-auto');
+    DOM.btnBoundaryFromXCal = document.getElementById('btn-boundary-from-xcal');
+    DOM.btnMeasureManual = document.getElementById('btn-measure-manual');
     // X-kalibrasyon slider
     DOM.calXSliderPanel = document.getElementById('cal-x-slider-panel');
     DOM.calX1Slider = document.getElementById('cal-x1-slider');
@@ -172,6 +195,11 @@ const API = {
     async measure(data) {
         const r = await fetch('/api/measure', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
         if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Ölçüm başarısız'); }
+        return r.json();
+    },
+    async measureManualBoundaries(data) {
+        const r = await fetch('/api/measure/manual-boundaries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Manuel ölçüm başarısız'); }
         return r.json();
     },
     async download(url, data, filename) {
@@ -542,8 +570,7 @@ async function handleAutoEdgeClick(e) {
     if (state.xCalState !== 'idle' &&
         isCalTabActive &&
         state.calMode === 'auto' &&
-        state.calibrated &&
-        !state.xCalibrated) {
+        state.calibrated) {
         handleXCalClick(clickX, clickImageId);
         return;
     }
@@ -710,6 +737,21 @@ function setXCalibrationResult(ppmmX, ppmmY) {
     // X sonuç kutusunu göster
     DOM.calXResult.classList.remove('hidden');
     DOM.calXResultPpmm.textContent = ppmmX.toFixed(4);
+    // Piksel mesafesi ve koordinat bilgilerini göster
+    if (state.xCalPoints.x1 !== null && state.xCalPoints.x2 !== null) {
+        const pxDist = Math.abs(state.xCalPoints.x2 - state.xCalPoints.x1);
+        const mmRef = DOM.calXReferenceMm ? parseFloat(DOM.calXReferenceMm.value) : null;
+        if (DOM.calXResultPxDist) DOM.calXResultPxDist.textContent = `${pxDist} px`;
+        if (DOM.calXResultCoords) {
+            DOM.calXResultCoords.textContent =
+                `x1=${Math.min(state.xCalPoints.x1, state.xCalPoints.x2)}, x2=${Math.max(state.xCalPoints.x1, state.xCalPoints.x2)}`;
+        }
+        // Referans değeri doğrulama: pxDist / ppmmX = mm (18.9 girmişse 18.9 çıkmalı)
+        if (mmRef && mmRef > 0) {
+            const check = (pxDist / ppmmX).toFixed(3);
+            console.log(`[XCal] pxDist=${pxDist}, ppmmX=${ppmmX.toFixed(4)}, check=${check}mm (expected: ${mmRef}mm)`);
+        }
+    }
     // Header'daki rozet güncelle
     DOM.calibrationBadge.classList.add('visible', 'calibrated');
     DOM.calibrationStatus.textContent = `Y:${(ppmmY || state.pixelsPerMm).toFixed(2)} X:${ppmmX.toFixed(2)} px/mm`;
@@ -724,11 +766,14 @@ function resetXCalibration() {
     state.xCalState = 'first_click';
     state.xCalPoints = { x1: null, x2: null };
     state.xCalImageId = null;
+    state.xCalibrated = false;
+    state.pixelsPerMmX = null;
     DOM.calX1.textContent = '—';
     DOM.calX2.textContent = '—';
     DOM.calXDist.textContent = '— px';
     DOM.btnCalibrateX.disabled = true;
     DOM.calXStep1.classList.remove('done');
+    DOM.calXStep1.classList.add('active');
     DOM.calXStep2.classList.remove('active', 'done');
     DOM.calXHintText.textContent = 'Bilinen uzunluktaki bir bölümün sol kenarına tıklayın (1. nokta).';
     clearXCalCanvas();
@@ -739,6 +784,10 @@ function resetXCalibration() {
     }
     DOM.calX1Input.value = '';
     DOM.calX2Input.value = '';
+    // X sonuç panelini gizle
+    DOM.calXResult.classList.add('hidden');
+    // Y sonucundaki X satırını sıfırla
+    DOM.calResultPpmmX.textContent = 'henüz kalibre edilmedi';
 }
 
 // ─── X-Kalibrasyon Canvas Overlay ────────────────────────────────────────────
@@ -752,12 +801,19 @@ function clearXCalCanvas() {
 }
 
 function syncCanvasSize(canvas, img) {
-    // Canvas boyutunu img'nin gerçek render boyutuna eşitle
+    // Canvas boyutunu img'nin UN-ZOOMED render boyutuna eşitle.
+    // getBoundingClientRect() CSS transform (scale) dahil boyut döndürür.
+    // Canvas'a da aynı CSS scale uygulandığı için, dahili çözünürlüğü
+    // zoom'suz boyut olmalı — aksi halde zoom² efekti oluşur ve
+    // çizimler (sınır çizgileri, X-kal işaretleri) yanlış konumda görünür.
     const rect = img.getBoundingClientRect();
     if (rect.width === 0) return false;
-    if (canvas.width !== Math.round(rect.width) || canvas.height !== Math.round(rect.height)) {
-        canvas.width = Math.round(rect.width);
-        canvas.height = Math.round(rect.height);
+    const zoomLevel = state.zoom.level || 1;
+    const w = Math.round(rect.width / zoomLevel);
+    const h = Math.round(rect.height / zoomLevel);
+    if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
     }
     return true;
 }
@@ -883,7 +939,19 @@ function setupMeasurement() {
             DOM.processedImage.src = r.overlay_image;
             DOM.activeAlgoTitle.innerHTML = 'Profil Çıkarma <span class="algo-badge">overlay</span>';
             showImagePanels();
-            showToast('Profil çıkarıldı', 'success');
+            // Önerilen sınırları kaydet — manuel mod için hazır tut
+            if (r.suggested_boundaries && r.suggested_boundaries.length > 0) {
+                state.suggestedBoundaries = r.suggested_boundaries;
+                // Manuel mod aktifse hemen uygula
+                if (state.boundaryMode) {
+                    state.boundaries = [...r.suggested_boundaries];
+                    drawBoundaryOverlay();
+                    updateBoundaryCount();
+                }
+                showToast(`Profil çıkarıldı — ${r.suggested_boundaries.length} sınır önerildi`, 'success');
+            } else {
+                showToast('Profil çıkarıldı', 'success');
+            }
         } catch (err) { showToast(err.message, 'error'); }
         finally { showLoading(false); }
     });
@@ -1111,7 +1179,7 @@ function setupEvents() {
 // ═══════════════════════════════════════════════════════════════
 function setupZoom() {
     const wrappers = document.querySelectorAll('.image-canvas-wrapper');
-    
+
     wrappers.forEach(wrapper => {
         // Mouse wheel zoom
         wrapper.addEventListener('wheel', (e) => {
@@ -1120,7 +1188,7 @@ function setupZoom() {
             const delta = e.deltaY > 0 ? -0.1 : 0.1;
             adjustZoom(delta);
         });
-        
+
         // Pan/drag başlat
         wrapper.addEventListener('mousedown', (e) => {
             if (state.zoom.level > 1.0) {
@@ -1132,7 +1200,7 @@ function setupZoom() {
             }
         });
     });
-    
+
     // Global mouse move (pan)
     document.addEventListener('mousemove', (e) => {
         if (state.zoom.isDragging) {
@@ -1141,7 +1209,7 @@ function setupZoom() {
             applyZoomTransform();
         }
     });
-    
+
     // Global mouse up (pan bitir)
     document.addEventListener('mouseup', () => {
         if (state.zoom.isDragging) {
@@ -1151,7 +1219,7 @@ function setupZoom() {
             });
         }
     });
-    
+
     // Zoom butonları
     DOM.btnZoomIn.addEventListener('click', () => adjustZoom(0.25));
     DOM.btnZoomOut.addEventListener('click', () => adjustZoom(-0.25));
@@ -1160,16 +1228,16 @@ function setupZoom() {
 
 function adjustZoom(delta) {
     const newLevel = Math.max(state.zoom.minLevel,
-                              Math.min(state.zoom.maxLevel, state.zoom.level + delta));
+        Math.min(state.zoom.maxLevel, state.zoom.level + delta));
     state.zoom.level = newLevel;
     DOM.zoomLevel.textContent = `${Math.round(newLevel * 100)}%`;
-    
+
     // Zoom %100'ün altındayken pan'i sıfırla
     if (newLevel <= 1.0) {
         state.zoom.panX = 0;
         state.zoom.panY = 0;
     }
-    
+
     applyZoomTransform();
 }
 
@@ -1184,15 +1252,14 @@ function resetZoom() {
 function applyZoomTransform() {
     const wrappers = document.querySelectorAll('.image-canvas-wrapper');
     wrappers.forEach(wrapper => {
-        const img = wrapper.querySelector('img');
-        const canvas = wrapper.querySelector('canvas');
-        [img, canvas].forEach(el => {
-            if (el) {
-                el.style.transform = `scale(${state.zoom.level}) translate(${state.zoom.panX / state.zoom.level}px, ${state.zoom.panY / state.zoom.level}px)`;
-            }
+        const els = wrapper.querySelectorAll('img, canvas');
+        els.forEach(el => {
+            el.style.transform = `scale(${state.zoom.level}) translate(${state.zoom.panX / state.zoom.level}px, ${state.zoom.panY / state.zoom.level}px)`;
         });
     });
-    
+    // Zoom/pan sonrası boundary overlay yenile
+    if (state.boundaryMode) drawBoundaryOverlay();
+
     // Zoom durumuna göre cursor'ı güncelle
     wrappers.forEach(wrapper => {
         wrapper.classList.toggle('zooming', state.zoom.level > 1.0);
@@ -1208,19 +1275,19 @@ function setupXCalSliders() {
         const newX1 = parseInt(e.target.value);
         setX1Value(newX1);
     });
-    
+
     // X1 Input (manuel giriş)
     DOM.calX1Input.addEventListener('change', (e) => {
         const newX1 = parseInt(e.target.value) || 0;
         setX1Value(newX1);
     });
-    
+
     // X2 Slider
     DOM.calX2Slider.addEventListener('input', (e) => {
         const newX2 = parseInt(e.target.value);
         setX2Value(newX2);
     });
-    
+
     // X2 Input (manuel giriş)
     DOM.calX2Input.addEventListener('change', (e) => {
         const newX2 = parseInt(e.target.value) || 0;
@@ -1251,7 +1318,7 @@ function setX2Value(value) {
 function updateXSliderRange() {
     const img = state.processedImageId ? DOM.processedImage : DOM.originalImage;
     if (!img || !img.naturalWidth) return;
-    
+
     const maxVal = Math.max(0, img.naturalWidth - 1);
     state.imageNaturalWidth = maxVal;
     DOM.calX1Slider.max = maxVal;
@@ -1301,6 +1368,304 @@ function getXCoordUpperBound() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Manuel Sınır Sistemi
+// ═══════════════════════════════════════════════════════════════
+
+/** Görüntüye tıklama koordinatını doğal piksel uzayına çevir */
+function screenToNaturalX(e, refImg) {
+    const rect = refImg.getBoundingClientRect();
+    if (rect.width === 0) return 0;
+    const scaleX = refImg.naturalWidth / rect.width;
+    const raw = Math.round((e.clientX - rect.left) * scaleX);
+    return Math.max(0, Math.min(refImg.naturalWidth - 1, raw));
+}
+
+/** İki sınır çizgisinin birbirine en yakın indeksini döndür (10px tolerans) */
+function findNearBoundaryIndex(naturalX, refImg) {
+    if (!refImg.naturalWidth) return -1;
+    const displayScale = refImg.getBoundingClientRect().width / refImg.naturalWidth;
+    const THRESHOLD_PX = 10; // ekran pikseli
+    for (let i = 0; i < state.boundaries.length; i++) {
+        const screenDist = Math.abs(state.boundaries[i] - naturalX) * displayScale;
+        if (screenDist < THRESHOLD_PX) return i;
+    }
+    return -1;
+}
+
+/** Boundary canvas'ını yeniden çiz */
+function drawBoundaryOverlay() {
+    const pairs = [
+        { canvas: DOM.originalBoundaryCanvas, img: DOM.originalImage },
+        { canvas: DOM.processedBoundaryCanvas, img: DOM.processedImage },
+    ];
+    pairs.forEach(({ canvas, img }) => {
+        if (!canvas || !img || !img.naturalWidth) return;
+        if (!syncCanvasSize(canvas, img)) return;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (!state.boundaryMode || state.boundaries.length === 0) return;
+
+        const scaleX = canvas.width / img.naturalWidth;
+        const h = canvas.height;
+
+        state.boundaries.forEach((xNat, idx) => {
+            const dx = Math.round(xNat * scaleX);
+            const isDragging = state.boundaryDrag.active && state.boundaryDrag.index === idx;
+            // Gölge çizgi (daha koyu)
+            ctx.strokeStyle = isDragging ? 'rgba(255,255,255,0.9)' : 'rgba(99,220,255,0.85)';
+            ctx.lineWidth = isDragging ? 2.5 : 1.5;
+            ctx.setLineDash([6, 4]);
+            ctx.beginPath();
+            ctx.moveTo(dx, 0);
+            ctx.lineTo(dx, h);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            // Üst ve alt tutaç noktaları
+            ctx.fillStyle = isDragging ? '#ffffff' : '#63dcff';
+            ctx.beginPath(); ctx.arc(dx, 14, 5, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(dx, h - 14, 5, 0, Math.PI * 2); ctx.fill();
+            // Sıra numarası etiketi
+            ctx.fillStyle = isDragging ? '#ffffff' : '#63dcff';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(String(idx + 1), dx, 28);
+        });
+    });
+}
+
+/** Boundary modunu aç/kapat */
+function setBoundaryMode(active) {
+    state.boundaryMode = active;
+    DOM.btnBoundaryOff.style.background = active ? '#1e293b' : 'var(--accent)';
+    DOM.btnBoundaryOff.style.borderColor = active ? '#334155' : 'var(--accent)';
+    DOM.btnBoundaryOn.style.background = active ? 'var(--accent)' : '#1e293b';
+    DOM.btnBoundaryOn.style.borderColor = active ? 'var(--accent)' : '#334155';
+    DOM.boundaryControls.classList.toggle('hidden', !active);
+
+    // Canvas pointer-events ve panel highlight
+    [DOM.originalBoundaryCanvas, DOM.processedBoundaryCanvas].forEach(c => {
+        if (c) c.classList.toggle('active', active);
+    });
+    [DOM.originalPanel, DOM.processedPanel].forEach(p => {
+        if (p) p.classList.toggle('boundary-active', active);
+    });
+
+    if (active && state.boundaries.length === 0 && state.suggestedBoundaries.length > 0) {
+        state.boundaries = [...state.suggestedBoundaries];
+    }
+    drawBoundaryOverlay();
+    updateBoundaryCount();
+}
+
+function updateBoundaryCount() {
+    if (DOM.boundaryCount) DOM.boundaryCount.textContent = state.boundaries.length;
+    if (DOM.btnMeasureManual) {
+        DOM.btnMeasureManual.disabled = state.boundaries.length === 0;
+    }
+}
+
+function setupBoundaryMode() {
+    DOM.btnBoundaryOff.addEventListener('click', () => setBoundaryMode(false));
+    DOM.btnBoundaryOn.addEventListener('click', () => setBoundaryMode(true));
+
+    DOM.btnBoundaryClear.addEventListener('click', () => {
+        state.boundaries = [];
+        drawBoundaryOverlay();
+        updateBoundaryCount();
+        showToast('Sınırlar temizlendi', 'info');
+    });
+
+    DOM.btnBoundaryAuto.addEventListener('click', () => {
+        if (state.suggestedBoundaries.length === 0) {
+            showToast('Önce "Profil Çıkar" ile önerileri yükleyin', 'warning');
+            return;
+        }
+        state.boundaries = [...state.suggestedBoundaries];
+        drawBoundaryOverlay();
+        updateBoundaryCount();
+        showToast(`${state.boundaries.length} otomatik sınır yüklendi`, 'success');
+    });
+
+    DOM.btnBoundaryFromXCal.addEventListener('click', () => {
+        if (state.xCalPoints.x1 === null || state.xCalPoints.x2 === null) {
+            showToast('Önce X-Ekseni kalibrasyonu yapın (Kalibrasyon sekmesi)', 'warning');
+            return;
+        }
+        const x1 = state.xCalPoints.x1;
+        const x2 = state.xCalPoints.x2;
+        // Mevcut sınırlara eklenmemesi için önce sınırlara dahil etmeden temizle
+        // Sadece iki kalibrasyon noktasını iç sınır olarak yükle (dış sınırlar
+        // backend'de profilin başı/sonu olarak otomatik eklenir)
+        const newBounds = [Math.min(x1, x2), Math.max(x1, x2)];
+        state.boundaries = newBounds;
+        drawBoundaryOverlay();
+        updateBoundaryCount();
+        showToast(
+            `X-kal. noktaları sınır olarak yüklendi: x1=${newBounds[0]}px, x2=${newBounds[1]}px`,
+            'success'
+        );
+    });
+
+    DOM.btnMeasureManual.addEventListener('click', async () => {
+        if (!state.imageId) { showToast('Önce fotoğraf yükleyin', 'warning'); return; }
+        if (!state.calibrated) { showToast('Önce kalibrasyon yapın', 'warning'); return; }
+        if (state.boundaries.length === 0) { showToast('En az bir sınır ekleyin', 'warning'); return; }
+        const activeId = state.processedImageId || state.imageId;
+        const sortedBounds = [...state.boundaries].sort((a, b) => a - b);
+        showLoading(true);
+        try {
+            const r = await API.measureManualBoundaries({
+                image_id: activeId,
+                boundaries: sortedBounds,
+                ...state.measureParams,
+            });
+            state.lastMeasurementTable = r.measurement_table;
+            state.lastSummary = r.summary;
+            DOM.processedImage.src = r.overlay_image;
+            DOM.activeAlgoTitle.innerHTML = `Ölçüm Sonucu <span class="algo-badge">manuel — ${r.summary.total_sections} bölüm</span>`;
+            showImagePanels();
+            renderMeasurementTable(r.measurement_table, r.summary);
+
+            // Debug: tüm bölümlerin piksel ve mm değerlerini konsola yaz
+            console.group('[Manuel Ölçüm] Bölüm Detayları');
+            console.log('Kullanılan sınırlar (px):', r.boundaries_used);
+            console.log('px/mm X:', r.pixels_per_mm_x);
+            (r.sections || []).forEach(s => {
+                console.log(
+                    `  Bölüm ${s.section_id}: x_start=${s.x_start_abs} x_end=${s.x_end_abs} ` +
+                    `width=${s.width_px}px → ${s.length_mm}mm | çap=${s.avg_diameter_px}px → ${s.diameter_mm}mm`
+                );
+            });
+            console.groupEnd();
+
+            // X kalibrasyon tutarlılık kontrolü: kalibrasyon noktaları sınır olarak kullanıldıysa
+            if (state.xCalibrated && state.xCalPoints.x1 !== null && state.xCalPoints.x2 !== null) {
+                const calX1 = Math.min(state.xCalPoints.x1, state.xCalPoints.x2);
+                const calX2 = Math.max(state.xCalPoints.x1, state.xCalPoints.x2);
+                // Sınırlar kalibrasyon noktalarıyla aynı mı?
+                const b1Match = sortedBounds.some(b => Math.abs(b - calX1) <= 2);
+                const b2Match = sortedBounds.some(b => Math.abs(b - calX2) <= 2);
+                if (b1Match && b2Match) {
+                    // Bu sınırlar arasındaki bölümü bul
+                    const calSec = r.sections && r.sections.find(s =>
+                        Math.abs(s.x_start_abs - calX1) <= 3 && Math.abs(s.x_end_abs - calX2) <= 3
+                    );
+                    if (calSec) {
+                        showToast(
+                            `Kalibrasyon sınırları arası: ${calSec.length_mm.toFixed(2)} mm (beklenen: referans değer)`,
+                            calSec.length_mm > 0 ? 'success' : 'warning'
+                        );
+                    }
+                }
+            }
+            showToast(`Manuel ölçüm tamamlandı: ${r.summary.total_sections} bölüm`, 'success');
+        } catch (err) { showToast(err.message, 'error'); }
+        finally { showLoading(false); }
+    });
+
+    // Boundary canvas mouse olayları — her iki canvas için
+    [
+        { canvas: DOM.originalBoundaryCanvas, img: DOM.originalImage },
+        { canvas: DOM.processedBoundaryCanvas, img: DOM.processedImage },
+    ].forEach(({ canvas, img }) => {
+        if (!canvas || !img) return;
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (!state.boundaryMode) return;
+            e.preventDefault();
+            e.stopPropagation();
+            // Double-click'in ilk click'inde sınır eklemeyi engelle
+            if (e.detail >= 2) return;
+            const natX = screenToNaturalX(e, img);
+            const nearIdx = findNearBoundaryIndex(natX, img);
+            if (nearIdx >= 0) {
+                // Var olan sınırı sürükle
+                state.boundaryDrag.active = true;
+                state.boundaryDrag.index = nearIdx;
+                state.boundaryDrag.startScreenX = e.clientX;
+                canvas.style.cursor = 'grabbing';
+            } else {
+                // Yeni sınır ekle
+                state.boundaries.push(natX);
+                state.boundaries.sort((a, b) => a - b);
+                drawBoundaryOverlay();
+                updateBoundaryCount();
+                showToast(`Sınır eklendi: x=${natX}px`, 'info');
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!state.boundaryMode) return;
+            if (state.boundaryDrag.active) {
+                const natX = screenToNaturalX(e, img);
+                const clamped = Math.max(0, Math.min(img.naturalWidth - 1, natX));
+                state.boundaries[state.boundaryDrag.index] = clamped;
+                drawBoundaryOverlay();
+                updateBoundaryCount();
+            } else {
+                // Hover efekti — yakın sınır var mı?
+                const natX = screenToNaturalX(e, img);
+                const nearIdx = findNearBoundaryIndex(natX, img);
+                canvas.style.cursor = nearIdx >= 0 ? 'grab' : 'col-resize';
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (state.boundaryDrag.active) {
+                state.boundaries.sort((a, b) => a - b);
+                state.boundaryDrag.active = false;
+                state.boundaryDrag.index = -1;
+                canvas.style.cursor = 'col-resize';
+                drawBoundaryOverlay();
+                updateBoundaryCount();
+            }
+        });
+
+        canvas.addEventListener('dblclick', (e) => {
+            if (!state.boundaryMode) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const natX = screenToNaturalX(e, img);
+            const nearIdx = findNearBoundaryIndex(natX, img);
+            if (nearIdx >= 0) {
+                state.boundaries.splice(nearIdx, 1);
+                drawBoundaryOverlay();
+                updateBoundaryCount();
+                showToast('Sınır silindi', 'info');
+            }
+        });
+
+        canvas.addEventListener('contextmenu', (e) => {
+            if (!state.boundaryMode) return;
+            e.preventDefault();
+            const natX = screenToNaturalX(e, img);
+            const nearIdx = findNearBoundaryIndex(natX, img);
+            if (nearIdx >= 0) {
+                state.boundaries.splice(nearIdx, 1);
+                drawBoundaryOverlay();
+                updateBoundaryCount();
+                showToast('Sınır silindi', 'info');
+            }
+        });
+    });
+
+    // Global mouseup: sürükleme canvas dışında bırakılırsa da bitirilsin
+    document.addEventListener('mouseup', () => {
+        if (state.boundaryDrag.active) {
+            state.boundaries.sort((a, b) => a - b);
+            state.boundaryDrag.active = false;
+            state.boundaryDrag.index = -1;
+            // Tüm boundary canvas'ların cursor'ını sıfırla
+            [DOM.originalBoundaryCanvas, DOM.processedBoundaryCanvas].forEach(c => {
+                if (c) c.style.cursor = 'col-resize';
+            });
+            drawBoundaryOverlay();
+            updateBoundaryCount();
+        }
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════════════════
 async function init() {
@@ -1312,6 +1677,7 @@ async function init() {
     setupEvents();
     setupZoom();
     setupXCalSliders();
+    setupBoundaryMode();
 
     // Resim yüklenince canvas boyutunu eşitle ve X işaretlerini yeniden çiz
     [DOM.originalImage, DOM.processedImage].forEach(img => {
@@ -1321,6 +1687,8 @@ async function init() {
             const isCalTabActive = calTab && calTab.classList.contains('active');
             if (state.xCalPoints.x1 !== null && isCalTabActive) drawXCalMarkers();
             updateXSliderRange();
+            // Boundary overlay yenile
+            if (state.boundaryMode) drawBoundaryOverlay();
         });
     });
     // Pencere resize'ında da yeniden çiz (sadece kalibrasyon sekmesindeyse)
@@ -1328,6 +1696,7 @@ async function init() {
         const calTab = document.getElementById('tab-calibration');
         const isCalTabActive = calTab && calTab.classList.contains('active');
         if (state.xCalPoints.x1 !== null && isCalTabActive) drawXCalMarkers();
+        if (state.boundaryMode) drawBoundaryOverlay();
     });
 
     try {

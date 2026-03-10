@@ -960,6 +960,22 @@ body::before {
     outline: 2px solid rgba(245, 158, 11, 0.4);
 }
 
+/* Manuel sınır modu */
+.boundary-overlay-canvas {
+    pointer-events: none;
+    z-index: 4;
+}
+.boundary-overlay-canvas.active {
+    pointer-events: auto;
+    cursor: col-resize;
+}
+.image-panel.boundary-active {
+    outline: 2px solid rgba(99, 220, 255, 0.5);
+}
+.image-panel.boundary-active img {
+    cursor: col-resize;
+}
+
 /* Parameters */
 .param-panel {
     display: none;

@@ -308,6 +308,100 @@ def detect_sections_golden(
     return {"segments": segments, "matched_features": matched_features}
 
 
+def compute_sections_from_boundaries(
+    profile: Dict,
+    calibration: CalibrationProfile,
+    x_boundaries: List[int],
+) -> List[Dict]:
+    """
+    Kullanıcının elle belirlediği x sınır pozisyonlarından bölüm ölçümleri hesapla.
+
+    Args:
+        profile: extract_profile() çıktısı
+        calibration: Kalibrasyon profili
+        x_boundaries: Görüntü koordinatlarındaki x sınır noktaları (mutlak)
+
+    Returns:
+        Bölüm listesi (detect_sections ile aynı format)
+    """
+    diameter_px = np.array(profile["diameter_px"], dtype=float)
+    top_edge = profile["top_edge"]
+    bottom_edge = profile["bottom_edge"]
+    x_start = profile["x_start"]
+    n = len(diameter_px)
+
+    diameter_px = np.nan_to_num(diameter_px, nan=0.0)
+
+    # Mutlak x koordinatlarını profil-göreli indekslere çevir
+    rel_pts = sorted({max(0, min(n, int(xb) - x_start)) for xb in x_boundaries})
+
+    # Başlangıç ve bitiş sınırlarını ekle
+    boundaries = [0] + rel_pts + [n]
+    clean: List[int] = [boundaries[0]]
+    for b in boundaries[1:]:
+        if b > clean[-1]:
+            clean.append(b)
+    if clean[-1] != n:
+        clean.append(n)
+
+    sections = []
+    section_num = 1
+
+    for i in range(len(clean) - 1):
+        s = clean[i]
+        e = clean[i + 1]
+        if e <= s:
+            continue
+
+        seg_diameters = diameter_px[s:e]
+        valid_diameters = seg_diameters[seg_diameters > 0]
+        if len(valid_diameters) == 0:
+            continue
+
+        avg_diameter_px = float(np.median(valid_diameters))
+        std_diameter_px = float(np.std(valid_diameters))
+        width_px = e - s
+        diameter_mm = calibration.pixels_to_mm_y(avg_diameter_px)
+        length_mm = calibration.pixels_to_mm_x(width_px)
+
+        mid_idx = (s + e) // 2
+        top_y_at_mid = (
+            top_edge[mid_idx]
+            if mid_idx < len(top_edge) and top_edge[mid_idx] is not None
+            else None
+        )
+        bot_y_at_mid = (
+            bottom_edge[mid_idx]
+            if mid_idx < len(bottom_edge) and bottom_edge[mid_idx] is not None
+            else None
+        )
+        center_y_values = [
+            profile["center_y"][j]
+            for j in range(s, e)
+            if j < len(profile["center_y"]) and profile["center_y"][j] is not None
+        ]
+        center_y = float(np.mean(center_y_values)) if center_y_values else None
+
+        sections.append({
+            "section_id": section_num,
+            "x_start_rel": s,
+            "x_end_rel": e,
+            "x_start_abs": x_start + s,
+            "x_end_abs": x_start + e,
+            "width_px": width_px,
+            "avg_diameter_px": round(avg_diameter_px, 2),
+            "std_diameter_px": round(std_diameter_px, 2),
+            "diameter_mm": round(diameter_mm, 4),
+            "length_mm": round(length_mm, 4),
+            "top_y_at_mid": top_y_at_mid,
+            "bottom_y_at_mid": bot_y_at_mid,
+            "center_y": center_y,
+        })
+        section_num += 1
+
+    return sections
+
+
 def generate_measurement_table(sections: List[Dict]) -> List[Dict]:
     """
     Bölüm verisinden VICIVISION benzeri ölçüm tablosu oluşturur.

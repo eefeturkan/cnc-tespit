@@ -28,6 +28,7 @@ from profile_extractor import extract_profile, draw_profile_overlay
 from measurement_engine import (
     detect_sections,
     detect_sections_golden,
+    compute_sections_from_boundaries,
     generate_measurement_table,
     get_measurement_summary,
 )
@@ -147,6 +148,14 @@ class XCalibrateRequest(BaseModel):
     x1: float
     x2: float
     profile_name: Optional[str] = None
+
+
+class ManualBoundariesRequest(BaseModel):
+    image_id: str
+    boundaries: List[int]   # Mutlak x koordinatları (görüntü piksel uzayında)
+    blur_ksize: int = 5
+    morph_ksize: int = 5
+    min_contour_area: int = 5000
 
 
 class ReportRequest(BaseModel):
@@ -423,6 +432,13 @@ async def calibrate(request: CalibrateRequest):
         profile = calculate_calibration_from_line(
             request.reference_mm, request.x1, request.y1, request.x2, request.y2
         )
+
+        # Mevcut kalibrasyonda kullanıcının bağımsız olarak ayarladığı X değeri
+        # varsa yeni profile aktar — böylece Y yeniden kalibre edilseyde X korunur.
+        old_cal = _get_active_calibration(request.image_id)
+        if old_cal and old_cal.x_is_calibrated:
+            profile.set_x_calibration(old_cal.pixels_per_mm_x)
+
         _set_active_calibration(profile, request.image_id)
 
         if request.profile_name:
@@ -431,6 +447,8 @@ async def calibrate(request: CalibrateRequest):
 
         return {
             "pixels_per_mm": round(profile.pixels_per_mm, 4),
+            "pixels_per_mm_x": round(profile.pixels_per_mm_x, 4) if profile.pixels_per_mm_x else None,
+            "x_calibrated": profile.x_is_calibrated,
             "reference_mm": request.reference_mm,
             "reference_pixels": round(profile.reference_pixels, 2),
             "saved": request.profile_name is not None,
@@ -639,7 +657,7 @@ async def measure_part(request: MeasureRequest):
 
 @app.post("/api/profile")
 async def extract_part_profile(request: MeasureRequest):
-    """Sadece profil çıkar (bölüm tespiti olmadan) — önizleme için."""
+    """Sadece profil çıkar — önizleme + önerilen sınırlar için."""
     img = _load_image(request.image_id)
     calibration = _get_active_calibration(request.image_id)
 
@@ -656,18 +674,77 @@ async def extract_part_profile(request: MeasureRequest):
         step = max(1, len(profile["diameter_px"]) // 200)
         diameter_sampled = profile["diameter_px"][::step]
 
+        # Otomatik tespit edilen bölüm sınırlarını öner (manuel mod başlangıcı için)
+        suggested_sections = detect_sections(
+            profile, calibration,
+            min_section_width_px=request.min_section_width_px,
+            gradient_threshold=request.gradient_threshold,
+        )
+        # Sınır noktaları: her bölümün sol kenarı + son bölümün sağ kenarı
+        suggested_boundaries = []
+        for sec in suggested_sections:
+            suggested_boundaries.append(sec["x_start_abs"])
+        if suggested_sections:
+            suggested_boundaries.append(suggested_sections[-1]["x_end_abs"])
+
         return {
             "overlay_image": f"data:image/png;base64,{_image_to_base64(overlay)}",
             "diameter_profile": [float(d) for d in diameter_sampled],
             "x_start": profile["x_start"],
             "x_end": profile["x_end"],
             "bbox": list(profile["bbox"]),
+            "suggested_boundaries": suggested_boundaries,
         }
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Profil hatası: {str(e)}")
+
+
+@app.post("/api/measure/manual-boundaries")
+async def measure_with_manual_boundaries(request: ManualBoundariesRequest):
+    """
+    Kullanıcının elle belirlediği x sınır pozisyonlarından ölçüm yap.
+    Sınırlar, görüntü koordinatlarındaki mutlak x değerleridir.
+    """
+    img = _load_image(request.image_id)
+    calibration = _get_active_calibration(request.image_id)
+
+    if not request.boundaries:
+        raise HTTPException(status_code=400, detail="En az bir sınır noktası gerekli")
+
+    try:
+        profile = extract_profile(img, {
+            "blur_ksize": request.blur_ksize,
+            "morph_ksize": request.morph_ksize,
+            "min_contour_area": request.min_contour_area,
+        })
+
+        sections = compute_sections_from_boundaries(profile, calibration, request.boundaries)
+
+        overlay = draw_profile_overlay(img, profile, calibration.pixels_per_mm, sections)
+        table = generate_measurement_table(sections)
+        summary = get_measurement_summary(sections)
+
+        # Her bölümün piksel ve mm bilgisini debug için sections'a ekle
+        sorted_bounds = sorted(request.boundaries)
+        return {
+            "overlay_image": f"data:image/png;base64,{_image_to_base64(overlay)}",
+            "sections": sections,
+            "measurement_table": table,
+            "summary": summary,
+            "calibration": calibration.to_dict(),
+            "x_calibrated": calibration.x_is_calibrated,
+            "mode": "manual",
+            "boundaries_used": sorted_bounds,
+            "pixels_per_mm_x": round(calibration.pixels_per_mm_x, 4) if calibration.pixels_per_mm_x else None,
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Manuel ölçüm hatası: {str(e)}")
 
 
 # ---------------------------------------------------------------------------

@@ -238,6 +238,14 @@
                                         <span>Piksel/mm (Boy/X):</span>
                                         <strong id="cal-x-result-ppmm">—</strong>
                                     </div>
+                                    <div class="cal-result-value" style="font-size:10px; opacity:0.7; margin-top:2px;">
+                                        <span>Piksel mesafesi:</span>
+                                        <strong id="cal-x-result-px-dist">—</strong>
+                                    </div>
+                                    <div class="cal-result-value" style="font-size:10px; opacity:0.7;">
+                                        <span>Koordinatlar (x1, x2):</span>
+                                        <strong id="cal-x-result-coords">—</strong>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -290,6 +298,49 @@
                                 <button class="btn-apply btn-measure-profile" id="btn-profile">📊 Profil Çıkar</button>
                                 <button class="btn-apply btn-measure-full" id="btn-measure">📐 Tam Ölçüm</button>
                             </div>
+
+                            <!-- Manuel Sınır Modu -->
+                            <div class="sidebar-section-header" style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border-subtle);">
+                                Elle Sınır Belirleme
+                            </div>
+                            <div class="cal-hint" style="margin-bottom:8px;">
+                                Önce "Profil Çıkar" ile otomatik sınırlar yükle, sonra görüntüde sürükle-ayarla ve "Sınırlarla Ölç" ile ölç.
+                            </div>
+                            <div style="display:flex; gap:8px; margin-bottom:8px;">
+                                <button class="btn-apply" id="btn-boundary-off"
+                                    style="flex:1; background:var(--accent); border-color:var(--accent);">Kapalı</button>
+                                <button class="btn-apply" id="btn-boundary-on"
+                                    style="flex:1; background:#1e293b; border:1px solid #334155; color:#e2e8f0;">Aktif</button>
+                            </div>
+                            <div id="boundary-controls" class="hidden">
+                                <div class="cal-hint" id="boundary-hint">
+                                    Görüntüye tıkla: sınır ekle. Çizgiye tıkla: sürükle. Sağ tık / çift tık: sil.
+                                </div>
+                                <div class="cal-point" style="margin-top:6px;">
+                                    <span class="cal-point-label">Sınır sayısı:</span>
+                                    <span class="cal-point-value" id="boundary-count">0</span>
+                                </div>
+                                <div style="display:flex; gap:6px; margin-top:8px;">
+                                    <button class="btn-apply" id="btn-boundary-clear"
+                                        style="flex:1; background:#1e293b; border:1px solid #334155; color:#94a3b8; font-size:11px;">
+                                        Temizle
+                                    </button>
+                                    <button class="btn-apply" id="btn-boundary-auto"
+                                        style="flex:1; background:#1e293b; border:1px solid #334155; color:#94a3b8; font-size:11px;"
+                                        title="Son profil çıkarımından önerilen sınırları yükle">
+                                        ↺ Otomatik
+                                    </button>
+                                </div>
+                                <button class="btn-apply" id="btn-boundary-from-xcal"
+                                    style="width:100%; margin-top:6px; background:#1e293b; border:1px solid rgba(245,158,11,0.4); color:#f59e0b; font-size:11px;"
+                                    title="X kalibrasyon noktalarını (x1, x2) sınır olarak ekle">
+                                    📐 X-Kal. Noktalarını Sınır Yap
+                                </button>
+                                <button class="btn-apply btn-measure-full" id="btn-measure-manual"
+                                    style="width:100%; margin-top:8px;" disabled>
+                                    📐 Sınırlarla Ölç
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -327,6 +378,7 @@
                         <div class="image-canvas-wrapper">
                             <img id="original-image" src="" alt="Orijinal görüntü">
                             <canvas id="original-xcal-canvas" class="xcal-overlay-canvas"></canvas>
+                            <canvas id="original-boundary-canvas" class="xcal-overlay-canvas boundary-overlay-canvas"></canvas>
                         </div>
                     </div>
 
@@ -337,6 +389,7 @@
                         <div class="image-canvas-wrapper">
                             <img id="processed-image" src="" alt="İşlenmiş görüntü">
                             <canvas id="processed-xcal-canvas" class="xcal-overlay-canvas"></canvas>
+                            <canvas id="processed-boundary-canvas" class="xcal-overlay-canvas boundary-overlay-canvas"></canvas>
                         </div>
                     </div>
 

@@ -11,14 +11,14 @@ from typing import Optional, Dict, Any
 # ---------------------------------------------------------------------------
 # Sabit Görüntü Boyutu Düzeltmesi
 # ---------------------------------------------------------------------------
-# Yüklenen görseller sabit 1024x647 boyutundadır.
-# Bu görüntüde X ve Y yönlerindeki piksel yoğunluğu farklıdır (kare piksel değil).
-# Çap kalibrasyonu (Y-ekseni) doğru sonuç verirken, aynı oran uzunluk (X-ekseni)
-# için yanlış sonuç verir. Bu düzeltme faktörü ölçüm verisinden hesaplanmıştır:
-#   Gerçek uzunluk / Ölçülen uzunluk = 18.90 / 14.81 = 1.2762
-# pixels_per_mm_x = pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
+# Yüklenen görseller sabit 1920x1080 (Full HD) boyutundadır.
+# 1920x1080 standart kare piksel oranına sahiptir (16:9).
+# Bu nedenle X ve Y yönlerinde piksel yoğunluğu eşittir ve
+# düzeltme faktörü 1.0 olarak ayarlanmıştır.
+# Kullanıcı bağımsız X-ekseni kalibrasyonu yaparsa bu değer
+# yalnızca fallback olarak kullanılır (set_x_calibration() override eder).
 # ---------------------------------------------------------------------------
-ASPECT_CORRECTION_FACTOR = 1.2762
+ASPECT_CORRECTION_FACTOR = 1.0
 
 
 class CalibrationProfile:
