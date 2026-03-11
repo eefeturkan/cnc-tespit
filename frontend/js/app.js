@@ -50,6 +50,9 @@ const state = {
         index: -1,       // Sürüklenen sınırın indeksi
         startScreenX: 0,
     },
+    // ROI
+    roiActive: false,
+    roi: null, // {x, y, width, height}
 };
 
 const DOM = {};
@@ -151,6 +154,16 @@ function cacheDom() {
     DOM.btnZoomOut = document.getElementById('btn-zoom-out');
     DOM.btnZoomFit = document.getElementById('btn-zoom-fit');
     DOM.zoomLevel = document.getElementById('zoom-level');
+    // ROI
+    DOM.roiSection = document.getElementById('roi-section');
+    DOM.roiX = document.getElementById('roi-x');
+    DOM.roiY = document.getElementById('roi-y');
+    DOM.roiW = document.getElementById('roi-w');
+    DOM.roiH = document.getElementById('roi-h');
+    DOM.btnRoiSet = document.getElementById('btn-roi-set');
+    DOM.btnRoiClear = document.getElementById('btn-roi-clear');
+    DOM.roiBadge = document.getElementById('roi-badge');
+    DOM.roiInfo = document.getElementById('roi-info');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -433,6 +446,12 @@ async function handleFile(file) {
         clearXCalCanvas();
         resetCalibrationForNewImage();
         updateCalibrationHint();
+        // ROI section göster
+        if (DOM.roiSection) DOM.roiSection.classList.remove('hidden');
+        state.roiActive = false;
+        state.roi = null;
+        if (DOM.roiBadge) DOM.roiBadge.classList.add('hidden');
+        if (DOM.roiInfo) { DOM.roiInfo.classList.add('hidden'); DOM.roiInfo.textContent = ''; }
         showToast(`${r.filename} yüklendi`, 'success');
         if (hadCalibration) {
             showToast('Yeni görsel yüklendiği için kalibrasyon sıfırlandı. Lütfen yeniden kalibre edin.', 'warning');
@@ -1666,6 +1685,71 @@ function setupBoundaryMode() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ROI (İlgi Alanı)
+// ═══════════════════════════════════════════════════════════════
+function setupROI() {
+    if (!DOM.btnRoiSet) return;
+
+    DOM.btnRoiSet.addEventListener('click', async () => {
+        if (!state.imageId) { showToast('Önce fotoğraf yükleyin', 'warning'); return; }
+        const x = parseInt(DOM.roiX.value);
+        const y = parseInt(DOM.roiY.value);
+        const w = parseInt(DOM.roiW.value);
+        const h = parseInt(DOM.roiH.value);
+        if (isNaN(x) || isNaN(y) || isNaN(w) || isNaN(h) || w <= 0 || h <= 0) {
+            showToast('Geçerli ROI koordinatları girin (x, y, genişlik, yükseklik)', 'warning');
+            return;
+        }
+        showLoading(true);
+        try {
+            const r = await fetch('/api/roi/set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image_id: state.imageId, x, y, width: w, height: h }),
+            });
+            if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'ROI ayarlanamadı'); }
+            const data = await r.json();
+            state.roiActive = true;
+            state.roi = data.roi;
+            // Kalibrasyon sıfırla (koordinatlar değişti)
+            resetCalibrationForNewImage();
+            state.processedImageId = null;
+            state.processedUrl = null;
+            // Kırpılmış görseli al ve göster
+            const cropR = await fetch(`/api/image/cropped?image_id=${encodeURIComponent(state.imageId)}`);
+            const cropData = await cropR.json();
+            DOM.originalImage.src = cropData.image;
+            DOM.processedImage.src = cropData.image;
+            showImagePanels();
+
+            DOM.roiBadge.classList.remove('hidden');
+            DOM.roiInfo.classList.remove('hidden');
+            DOM.roiInfo.textContent = `ROI: ${data.cropped_size.width}×${data.cropped_size.height} px (orijinal: ${data.original_size.width}×${data.original_size.height})`;
+            showToast(`ROI uygulandı: ${data.cropped_size.width}×${data.cropped_size.height} px`, 'success');
+        } catch (err) { showToast(err.message, 'error'); }
+        finally { showLoading(false); }
+    });
+
+    DOM.btnRoiClear.addEventListener('click', async () => {
+        if (!state.imageId) return;
+        try {
+            await fetch(`/api/roi/clear?image_id=${encodeURIComponent(state.imageId)}`, { method: 'POST' });
+            state.roiActive = false;
+            state.roi = null;
+            DOM.roiBadge.classList.add('hidden');
+            DOM.roiInfo.classList.add('hidden');
+            DOM.roiInfo.textContent = '';
+            // Orijinal görseli geri yükle
+            DOM.originalImage.src = state.imageUrl;
+            DOM.processedImage.src = state.imageUrl;
+            resetCalibrationForNewImage();
+            showToast('ROI temizlendi', 'info');
+        } catch (err) { showToast(err.message, 'error'); }
+    });
+}
+
+
+// ═══════════════════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════════════════
 async function init() {
@@ -1678,6 +1762,7 @@ async function init() {
     setupZoom();
     setupXCalSliders();
     setupBoundaryMode();
+    setupROI();
 
     // Resim yüklenince canvas boyutunu eşitle ve X işaretlerini yeniden çiz
     [DOM.originalImage, DOM.processedImage].forEach(img => {

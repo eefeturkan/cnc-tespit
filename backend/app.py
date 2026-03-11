@@ -76,6 +76,9 @@ active_calibration_by_image: Dict[str, CalibrationProfile] = {}
 # image_id bazlı golden (referans) layout
 active_reference_layout_by_image: Dict[str, dict] = {}
 
+# image_id bazlı ROI (Region of Interest) — (x, y, w, h)
+active_roi_by_image: Dict[str, tuple] = {}
+
 
 # ---------------------------------------------------------------------------
 # Modeller
@@ -170,10 +173,19 @@ class ReportRequest(BaseModel):
     min_contour_area: int = 5000
 
 
+class ROIRequest(BaseModel):
+    image_id: str
+    x: int
+    y: int
+    width: int
+    height: int
+
+
 # ---------------------------------------------------------------------------
 # Yardımcı
 # ---------------------------------------------------------------------------
-def _load_image(image_id: str) -> np.ndarray:
+def _load_image(image_id: str, apply_roi: bool = True) -> np.ndarray:
+    """Görüntüyü yükle, ROI varsa kırp."""
     safe_id = Path(image_id).name
     filepath = UPLOAD_DIR / safe_id
     if not filepath.exists():
@@ -181,6 +193,18 @@ def _load_image(image_id: str) -> np.ndarray:
     img = cv2.imread(str(filepath))
     if img is None:
         raise HTTPException(status_code=400, detail="Görüntü okunamadı")
+    if apply_roi:
+        roi = _get_roi(image_id)
+        if roi:
+            x, y, w, h = roi
+            ih, iw = img.shape[:2]
+            # Sınır kontrolü
+            x = max(0, min(x, iw - 1))
+            y = max(0, min(y, ih - 1))
+            w = min(w, iw - x)
+            h = min(h, ih - y)
+            if w > 0 and h > 0:
+                img = img[y:y+h, x:x+w]
     return img
 
 
@@ -212,6 +236,79 @@ def _get_active_reference_layout(image_id: Optional[str]) -> Optional[dict]:
     if not image_id:
         return None
     return active_reference_layout_by_image.get(Path(image_id).name)
+
+
+def _set_roi(image_id: str, x: int, y: int, w: int, h: int):
+    """ROI'yi image_id bazlı kaydet."""
+    active_roi_by_image[Path(image_id).name] = (x, y, w, h)
+
+
+def _get_roi(image_id: Optional[str]) -> Optional[tuple]:
+    """Varsa image_id'ye bağlı ROI'yi döndür."""
+    if not image_id:
+        return None
+    return active_roi_by_image.get(Path(image_id).name)
+
+
+def _clear_roi(image_id: str):
+    """ROI'yi temizle."""
+    active_roi_by_image.pop(Path(image_id).name, None)
+
+
+# ---------------------------------------------------------------------------
+# ROI Endpoint'leri
+# ---------------------------------------------------------------------------
+@app.post("/api/roi/set")
+async def set_roi(request: ROIRequest):
+    """Görüntü için ROI (ilgi alanı) ayarla."""
+    # Görüntünün var olduğunu kontrol et
+    img = _load_image(request.image_id, apply_roi=False)
+    ih, iw = img.shape[:2]
+    # Sınır doğrulama
+    x = max(0, min(request.x, iw - 1))
+    y = max(0, min(request.y, ih - 1))
+    w = min(request.width, iw - x)
+    h = min(request.height, ih - y)
+    if w <= 0 or h <= 0:
+        raise HTTPException(status_code=400, detail="Geçersiz ROI boyutları")
+    _set_roi(request.image_id, x, y, w, h)
+    # Kalibrasyon sıfırla (ROI değişince ölçüler geçersiz olur)
+    return {
+        "ok": True,
+        "roi": {"x": x, "y": y, "width": w, "height": h},
+        "original_size": {"width": iw, "height": ih},
+        "cropped_size": {"width": w, "height": h},
+    }
+
+
+@app.get("/api/roi/get")
+async def get_roi(image_id: str):
+    """Aktif ROI'yi döndür."""
+    roi = _get_roi(image_id)
+    if not roi:
+        return {"active": False, "roi": None}
+    x, y, w, h = roi
+    return {"active": True, "roi": {"x": x, "y": y, "width": w, "height": h}}
+
+
+@app.post("/api/roi/clear")
+async def clear_roi(image_id: str):
+    """ROI'yi temizle."""
+    _clear_roi(image_id)
+    return {"ok": True}
+
+
+@app.get("/api/image/cropped")
+async def get_cropped_image(image_id: str):
+    """ROI uygulanmış (kırpılmış) görüntüyü base64 döndür."""
+    img = _load_image(image_id, apply_roi=True)
+    h, w = img.shape[:2]
+    b64 = _image_to_base64(img)
+    return {
+        "image": f"data:image/png;base64,{b64}",
+        "width": w,
+        "height": h,
+    }
 
 
 # ---------------------------------------------------------------------------

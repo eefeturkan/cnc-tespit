@@ -101,6 +101,45 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- ROI (İlgi Alanı) Kontrolü -->
+                    <div class="roi-section hidden" id="roi-section">
+                        <div class="sidebar-section-header" style="font-size:11px; padding:6px 0 4px;">
+                            ✂️ ROI (İlgi Alanı)
+                            <span class="roi-badge hidden" id="roi-badge"
+                                style="margin-left:6px; background:#16a34a; color:#fff; font-size:9px; padding:1px 5px; border-radius:4px;">AKTİF</span>
+                        </div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:6px;">
+                            <div>
+                                <label style="font-size:9px; color:#94a3b8;">X</label>
+                                <input type="number" class="param-input" id="roi-x" placeholder="2571" value="2571"
+                                    style="font-size:11px; padding:3px 4px;">
+                            </div>
+                            <div>
+                                <label style="font-size:9px; color:#94a3b8;">Y</label>
+                                <input type="number" class="param-input" id="roi-y" placeholder="1807" value="1807"
+                                    style="font-size:11px; padding:3px 4px;">
+                            </div>
+                            <div>
+                                <label style="font-size:9px; color:#94a3b8;">Genişlik</label>
+                                <input type="number" class="param-input" id="roi-w" placeholder="3159" value="3159"
+                                    style="font-size:11px; padding:3px 4px;">
+                            </div>
+                            <div>
+                                <label style="font-size:9px; color:#94a3b8;">Yükseklik</label>
+                                <input type="number" class="param-input" id="roi-h" placeholder="1418" value="1418"
+                                    style="font-size:11px; padding:3px 4px;">
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:6px;">
+                            <button class="btn-apply" id="btn-roi-set" style="flex:1; font-size:11px; padding:4px;">ROI
+                                Uygula</button>
+                            <button class="btn-apply" id="btn-roi-clear"
+                                style="flex-shrink:0; font-size:11px; padding:4px; background:#1e293b; border:1px solid #334155; color:#94a3b8;">Temizle</button>
+                        </div>
+                        <div class="roi-info hidden" id="roi-info"
+                            style="font-size:10px; color:#4ade80; margin-top:4px;"></div>
+                    </div>
                 </div>
 
                 <!-- Tab: Algorithms -->
@@ -181,10 +220,15 @@
                             <!-- X-Ekseni (Uzunluk) Kalibrasyonu -->
                             <div class="cal-x-section hidden" id="cal-x-section">
                                 <div class="cal-x-header">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        width="14" height="14">
+                                        <line x1="5" y1="12" x2="19" y2="12" />
+                                        <polyline points="12 5 19 12 12 19" />
+                                    </svg>
                                     X-Ekseni Uzunluk Kalibrasyonu
                                 </div>
-                                <p class="cal-hint" id="cal-x-hint-text">Bilinen uzunluktaki bir bölümün <strong>sol</strong> kenarına tıklayın (1. nokta).</p>
+                                <p class="cal-hint" id="cal-x-hint-text">Bilinen uzunluktaki bir bölümün
+                                    <strong>sol</strong> kenarına tıklayın (1. nokta).</p>
                                 <div class="cal-x-step-indicator">
                                     <div class="cal-x-step active" id="cal-x-step-1">
                                         <span class="cal-x-step-num">1</span> Sol Kenar
@@ -213,13 +257,17 @@
                                     <div class="cal-x-slider-header">Çizgi Ayarlama</div>
                                     <div class="cal-x-slider-row">
                                         <label class="cal-x-slider-label">X1:</label>
-                                        <input type="range" class="cal-x-slider" id="cal-x1-slider" min="0" max="1000" value="0" step="1">
-                                        <input type="number" class="cal-x-input" id="cal-x1-input" min="0" placeholder="px">
+                                        <input type="range" class="cal-x-slider" id="cal-x1-slider" min="0" max="1000"
+                                            value="0" step="1">
+                                        <input type="number" class="cal-x-input" id="cal-x1-input" min="0"
+                                            placeholder="px">
                                     </div>
                                     <div class="cal-x-slider-row">
                                         <label class="cal-x-slider-label">X2:</label>
-                                        <input type="range" class="cal-x-slider" id="cal-x2-slider" min="0" max="1000" value="0" step="1">
-                                        <input type="number" class="cal-x-input" id="cal-x2-input" min="0" placeholder="px">
+                                        <input type="range" class="cal-x-slider" id="cal-x2-slider" min="0" max="1000"
+                                            value="0" step="1">
+                                        <input type="number" class="cal-x-input" id="cal-x2-input" min="0"
+                                            placeholder="px">
                                     </div>
                                 </div>
                                 <div class="param-group">
@@ -228,12 +276,15 @@
                                         placeholder="örn: 18.90" step="0.01" min="0.01">
                                 </div>
                                 <div style="display:flex; gap:8px;">
-                                    <button class="btn-apply btn-calibrate" id="btn-calibrate-x" disabled style="flex:1;">X-Eksenini Kalibre Et</button>
-                                    <button class="btn-apply" id="btn-x-reset" title="Yeniden kalibre et" style="width:36px; padding:0; flex-shrink:0;">↺</button>
+                                    <button class="btn-apply btn-calibrate" id="btn-calibrate-x" disabled
+                                        style="flex:1;">X-Eksenini Kalibre Et</button>
+                                    <button class="btn-apply" id="btn-x-reset" title="Yeniden kalibre et"
+                                        style="width:36px; padding:0; flex-shrink:0;">↺</button>
                                 </div>
                                 <!-- X Kalibrasyon sonucu -->
                                 <div class="cal-x-result hidden" id="cal-x-result">
-                                    <div class="cal-result-header" style="color: var(--accent-secondary);">✅ X-Ekseni Kalibre</div>
+                                    <div class="cal-result-header" style="color: var(--accent-secondary);">✅ X-Ekseni
+                                        Kalibre</div>
                                     <div class="cal-result-value">
                                         <span>Piksel/mm (Boy/X):</span>
                                         <strong id="cal-x-result-ppmm">—</strong>
@@ -260,11 +311,14 @@
                             <div class="param-group">
                                 <label class="param-label">Ölçüm Modu</label>
                                 <div style="display:flex; gap:8px;">
-                                    <button class="btn-apply" id="btn-measure-mode-auto" style="flex:1; background:#1e293b; border:1px solid #334155; color:#e2e8f0;">Auto</button>
-                                    <button class="btn-apply" id="btn-measure-mode-golden" style="flex:1; background:#0f172a; border:1px solid #334155; color:#e2e8f0;">Golden</button>
+                                    <button class="btn-apply" id="btn-measure-mode-auto"
+                                        style="flex:1; background:#1e293b; border:1px solid #334155; color:#e2e8f0;">Auto</button>
+                                    <button class="btn-apply" id="btn-measure-mode-golden"
+                                        style="flex:1; background:#0f172a; border:1px solid #334155; color:#e2e8f0;">Golden</button>
                                 </div>
                                 <div class="cal-hint" id="measure-mode-hint" style="margin-top:6px;">
-                                    Auto: sistem serbest bölüm tespiti yapar. Golden: sadece seçilen ID’lere göre sabit ölçüm üretir.
+                                    Auto: sistem serbest bölüm tespiti yapar. Golden: sadece seçilen ID’lere göre sabit
+                                    ölçüm üretir.
                                 </div>
                             </div>
                             <div class="param-group">
@@ -300,11 +354,13 @@
                             </div>
 
                             <!-- Manuel Sınır Modu -->
-                            <div class="sidebar-section-header" style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border-subtle);">
+                            <div class="sidebar-section-header"
+                                style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border-subtle);">
                                 Elle Sınır Belirleme
                             </div>
                             <div class="cal-hint" style="margin-bottom:8px;">
-                                Önce "Profil Çıkar" ile otomatik sınırlar yükle, sonra görüntüde sürükle-ayarla ve "Sınırlarla Ölç" ile ölç.
+                                Önce "Profil Çıkar" ile otomatik sınırlar yükle, sonra görüntüde sürükle-ayarla ve
+                                "Sınırlarla Ölç" ile ölç.
                             </div>
                             <div style="display:flex; gap:8px; margin-bottom:8px;">
                                 <button class="btn-apply" id="btn-boundary-off"
@@ -378,7 +434,8 @@
                         <div class="image-canvas-wrapper">
                             <img id="original-image" src="" alt="Orijinal görüntü">
                             <canvas id="original-xcal-canvas" class="xcal-overlay-canvas"></canvas>
-                            <canvas id="original-boundary-canvas" class="xcal-overlay-canvas boundary-overlay-canvas"></canvas>
+                            <canvas id="original-boundary-canvas"
+                                class="xcal-overlay-canvas boundary-overlay-canvas"></canvas>
                         </div>
                     </div>
 
@@ -389,7 +446,8 @@
                         <div class="image-canvas-wrapper">
                             <img id="processed-image" src="" alt="İşlenmiş görüntü">
                             <canvas id="processed-xcal-canvas" class="xcal-overlay-canvas"></canvas>
-                            <canvas id="processed-boundary-canvas" class="xcal-overlay-canvas boundary-overlay-canvas"></canvas>
+                            <canvas id="processed-boundary-canvas"
+                                class="xcal-overlay-canvas boundary-overlay-canvas"></canvas>
                         </div>
                     </div>
 
