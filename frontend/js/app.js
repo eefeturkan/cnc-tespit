@@ -578,10 +578,29 @@ async function handleAutoEdgeClick(e) {
     const isProcessedClick = (e.currentTarget === DOM.processedImage);
     const refImg = isProcessedClick ? DOM.processedImage : DOM.originalImage;
     const rect = refImg.getBoundingClientRect();
-    const scaleX = refImg.naturalWidth / rect.width;
-    const scaleY = refImg.naturalHeight / rect.height;
-    const clickX = clampXCoord(Math.round((e.clientX - rect.left) * scaleX));
-    const clickY = Math.max(0, Math.min(refImg.naturalHeight - 1, Math.round((e.clientY - rect.top) * scaleY)));
+
+    // Zoom/pan durumunu hesaba kat
+    const zoomLevel = state.zoom.level || 1;
+    const panX = state.zoom.panX || 0;
+    const panY = state.zoom.panY || 0;
+
+    // rect.width/height zaten zoom sonrası boyutları veriyor
+    // Zoom öncesi (CSS'deki gerçek) boyutları hesapla
+    const unzoomedWidth = rect.width / zoomLevel;
+    const unzoomedHeight = rect.height / zoomLevel;
+
+    // Natural koordinat sistemine dönüştürme oranları
+    const scaleX = refImg.naturalWidth / unzoomedWidth;
+    const scaleY = refImg.naturalHeight / unzoomedHeight;
+
+    // Ekran koordinatından pan offset'ini çıkar ve zoom'a böl
+    // Bu bize zoom öncesi koordinat sistemindeki konumu verir
+    const adjustedX = (e.clientX - rect.left - panX) / zoomLevel;
+    const adjustedY = (e.clientY - rect.top - panY) / zoomLevel;
+
+    // Zoom öncesi koordinatı natural koordinata dönüştür
+    const clickX = clampXCoord(Math.round(adjustedX * scaleX));
+    const clickY = Math.max(0, Math.min(refImg.naturalHeight - 1, Math.round(adjustedY * scaleY)));
     const isCalTabActive = getActiveTabId() === 'tab-calibration';
     const clickImageId = (isProcessedClick && state.processedImageId) ? state.processedImageId : state.imageId;
 
@@ -1390,19 +1409,44 @@ function getXCoordUpperBound() {
 // Manuel Sınır Sistemi
 // ═══════════════════════════════════════════════════════════════
 
-/** Görüntüye tıklama koordinatını doğal piksel uzayına çevir */
+/** Görüntüye tıklama koordinatını doğal piksel uzayına çevir (zoom/pan destekli) */
 function screenToNaturalX(e, refImg) {
     const rect = refImg.getBoundingClientRect();
     if (rect.width === 0) return 0;
-    const scaleX = refImg.naturalWidth / rect.width;
-    const raw = Math.round((e.clientX - rect.left) * scaleX);
+
+    // Zoom/pan durumunu hesaba kat
+    const zoomLevel = state.zoom.level || 1;
+    const panX = state.zoom.panX || 0;
+
+    // rect.width zaten zoom sonrası boyutu veriyor
+    // Zoom öncesi (CSS'deki gerçek) boyutu hesapla
+    const unzoomedWidth = rect.width / zoomLevel;
+
+    // Natural koordinat sistemine dönüştürme oranı
+    const scaleX = refImg.naturalWidth / unzoomedWidth;
+
+    // Ekran koordinatından pan offset'ini çıkar ve zoom'a böl
+    // Bu bize zoom öncesi koordinat sistemindeki konumu verir
+    const adjustedX = (e.clientX - rect.left - panX) / zoomLevel;
+
+    // Zoom öncesi koordinatı natural koordinata dönüştür
+    const raw = Math.round(adjustedX * scaleX);
     return Math.max(0, Math.min(refImg.naturalWidth - 1, raw));
 }
 
 /** İki sınır çizgisinin birbirine en yakın indeksini döndür (10px tolerans) */
 function findNearBoundaryIndex(naturalX, refImg) {
     if (!refImg.naturalWidth) return -1;
-    const displayScale = refImg.getBoundingClientRect().width / refImg.naturalWidth;
+
+    // Zoom durumunu hesaba kat
+    const zoomLevel = state.zoom.level || 1;
+    const rect = refImg.getBoundingClientRect();
+    const unzoomedWidth = rect.width / zoomLevel;
+
+    // Natural'dan ekran koordinatına dönüştürme oranı
+    // unzoomedWidth / naturalWidth = zoom öncesi 1 natural pikselin ekran pikseli
+    // zoomLevel ile çarpınca zoom sonrası değeri bulunur
+    const displayScale = (unzoomedWidth / refImg.naturalWidth) * zoomLevel;
     const THRESHOLD_PX = 10; // ekran pikseli
     for (let i = 0; i < state.boundaries.length; i++) {
         const screenDist = Math.abs(state.boundaries[i] - naturalX) * displayScale;
