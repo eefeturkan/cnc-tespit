@@ -469,11 +469,60 @@
                     <div class="params-grid" id="params-grid"></div>
                 </div>
 
-                <!-- Measurement Table -->
+                <!-- Fixed Measurement Button -->
+                <div class="fixed-measurement-panel" id="fixed-measurement-panel" style="margin: 10px 0; padding: 15px; background: #f8fafc; border-radius: 8px; border: 2px solid #3b82f6;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <span class="param-panel-title" style="color: #1e40af; font-size: 16px;">📐 Sabit Ölçüm Noktaları</span>
+                            <span style="color: #64748b; font-size: 12px; margin-left: 10px;">Teknik çizimdeki 03, 04, 05, 06, 08, 17, 18, 21, 22, 24 noktaları</span>
+                        </div>
+                        <button class="btn-primary" id="btn-fixed-measure"
+                            style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); border: none; padding: 10px 24px; font-size: 14px; font-weight: 600;">
+                            🔍 Sabit Noktalarda Ölç
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Fixed Measurement Results Table -->
+                <div class="measurement-table-panel hidden" id="fixed-measurement-results-panel" style="border: 2px solid #3b82f6; background: #eff6ff;">
+                    <div class="measurement-table-header" style="background: #dbeafe;">
+                        <div>
+                            <span class="param-panel-title" style="color: #1e40af;">📊 Sabit Ölçüm Sonuçları</span>
+                            <span class="measure-summary" id="fixed-measure-summary"></span>
+                        </div>
+                        <div class="download-buttons">
+                            <button class="btn-download" id="btn-download-fixed-pdf" title="PDF Rapor İndir" style="background: #3b82f6; color: white;">
+                                📄 PDF
+                            </button>
+                            <button class="btn-download" id="btn-download-fixed-excel" title="Excel İndir" style="background: #10b981; color: white;">
+                                📊 Excel
+                            </button>
+                        </div>
+                    </div>
+                    <div class="measurement-table-wrapper">
+                        <table class="measurement-table" id="fixed-measurement-table" style="font-size: 13px;">
+                            <thead style="background: #bfdbfe;">
+                                <tr>
+                                    <th style="width: 60px;">Kod</th>
+                                    <th style="width: 80px;">Tip</th>
+                                    <th>Açıklama</th>
+                                    <th style="width: 100px;">Nominal</th>
+                                    <th style="width: 100px;">Ölçülen</th>
+                                    <th style="width: 80px;">Sapma</th>
+                                    <th style="width: 120px;">Tolerans</th>
+                                    <th style="width: 80px;">Durum</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fixed-measurement-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Measurement Table (Original) -->
                 <div class="measurement-table-panel hidden" id="measurement-table-panel">
                     <div class="measurement-table-header">
                         <div>
-                            <span class="param-panel-title">📊 Ölçüm Sonuçları</span>
+                            <span class="param-panel-title">📊 Otomatik Ölçüm Sonuçları</span>
                             <span class="measure-summary" id="measure-summary"></span>
                         </div>
                         <div class="download-buttons">

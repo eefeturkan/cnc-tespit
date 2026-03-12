@@ -1910,4 +1910,167 @@ async function init() {
     } catch (err) { showToast('Algoritmalar yüklenemedi: ' + err.message, 'error'); }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// SABİT ÖLÇÜM NOKTALARI FONKSİYONLARI
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Sabit ölçüm noktalarında ölçüm yapar (03, 04, 05, 06, 08, 17, 18, 21, 22, 24)
+ */
+async function performFixedMeasurement() {
+    if (!state.imageId) {
+        showToast('Önce fotoğraf yükleyin', 'warning');
+        return;
+    }
+    
+    if (!state.calibrated) {
+        showToast('Önce Y ekseni kalibrasyonu yapın', 'warning');
+        return;
+    }
+    
+    showLoading(true);
+    
+    try {
+        // İşlenmiş görüntüyü kullan (algoritma uygulanmış)
+        const imageIdToUse = state.processedImageId || state.imageId;
+        
+        const response = await fetch('/api/measure/fixed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                image_id: imageIdToUse,
+                blur_ksize: state.measureParams.blur_ksize,
+                morph_ksize: state.measureParams.morph_ksize,
+                min_contour_area: state.measureParams.min_contour_area,
+            }),
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Sabit ölçüm hatası');
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            displayFixedMeasurementResults(data);
+            showToast(`Sabit ölçüm tamamlandı: ${data.summary.pass}/${data.summary.total} PASS`, 'success');
+        } else {
+            throw new Error('Ölçüm başarısız');
+        }
+        
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        showLoading(false);
+    }
+}
+
+/**
+ * Sabit ölçüm sonuçlarını tabloda gösterir
+ */
+function displayFixedMeasurementResults(data) {
+    const tbody = document.getElementById('fixed-measurement-tbody');
+    const panel = document.getElementById('fixed-measurement-results-panel');
+    const summary = document.getElementById('fixed-measure-summary');
+    
+    if (!tbody || !panel) return;
+    
+    // Paneli göster
+    panel.classList.remove('hidden');
+    
+    // Özet bilgisi
+    const passRate = data.summary.pass_rate.toFixed(1);
+    const passColor = data.summary.fail === 0 ? '#16a34a' : '#dc2626';
+    summary.innerHTML = `
+        <span style="color: ${passColor}; font-weight: bold;">
+            ${data.summary.pass} PASS / ${data.summary.fail} FAIL
+            (${passRate}%)
+        </span>
+    `;
+    
+    // Tabloyu doldur
+    tbody.innerHTML = '';
+    
+    data.measurements.forEach((m, index) => {
+        const row = document.createElement('tr');
+        row.style.backgroundColor = index % 2 === 0 ? '#ffffff' : '#f8fafc';
+        
+        // Durum rengi
+        const statusColor = m.status === 'PASS' ? '#16a34a' : '#dc2626';
+        const statusBg = m.status === 'PASS' ? '#dcfce7' : '#fee2e2';
+        
+        // Sapma rengi
+        const deviation = parseFloat(m.deviation);
+        const deviationColor = Math.abs(deviation) < 0.01 ? '#16a34a' :
+                              Math.abs(deviation) < 0.05 ? '#ca8a04' : '#dc2626';
+        
+        row.innerHTML = `
+            <td style="font-weight: bold; text-align: center;">${m.code}</td>
+            <td style="text-align: center;">${getMeasurementTypeLabel(m.type)}</td>
+            <td style="font-size: 12px;">${m.description}</td>
+            <td style="text-align: right; font-family: monospace;">${m.nominal}</td>
+            <td style="text-align: right; font-family: monospace; font-weight: bold;">${m.measured}</td>
+            <td style="text-align: right; font-family: monospace; color: ${deviationColor};">
+                ${deviation >= 0 ? '+' : ''}${m.deviation}
+            </td>
+            <td style="text-align: center; font-size: 11px;">
+                ${m.lower_tol} / ${m.upper_tol}
+            </td>
+            <td style="text-align: center;">
+                <span style="background: ${statusBg}; color: ${statusColor};
+                           padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 12px;">
+                    ${m.status}
+                </span>
+            </td>
+        `;
+        
+        tbody.appendChild(row);
+    });
+    
+    // Overlay görüntüsünü güncelle
+    if (data.overlay_image) {
+        DOM.processedImage.src = data.overlay_image;
+    }
+}
+
+/**
+ * Ölçüm tipi etiketi döndürür
+ */
+function getMeasurementTypeLabel(type) {
+    const labels = {
+        'diameter': '⌀ Çap',
+        'length': '═ Uzunluk',
+        'height': 'H Yükseklik'
+    };
+    return labels[type] || type;
+}
+
+/**
+ * Şablon bilgilerini gösterir
+ */
+async function loadTemplateInfo() {
+    try {
+        const response = await fetch('/api/templates');
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        console.log('Yüklü şablonlar:', data);
+        
+    } catch (err) {
+        console.error('Şablon bilgisi yüklenemedi:', err);
+    }
+}
+
+// Sabit ölçüm butonu event listener'ı
+document.addEventListener('DOMContentLoaded', () => {
+    const btnFixedMeasure = document.getElementById('btn-fixed-measure');
+    if (btnFixedMeasure) {
+        btnFixedMeasure.addEventListener('click', performFixedMeasurement);
+    }
+    
+    // Şablon bilgilerini yükle
+    loadTemplateInfo();
+});
+
 document.addEventListener('DOMContentLoaded', init);

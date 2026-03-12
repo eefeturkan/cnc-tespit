@@ -33,6 +33,7 @@ from measurement_engine import (
     get_measurement_summary,
 )
 from report_generator import generate_pdf_report, generate_excel_report
+from fixed_measurement_engine import FixedMeasurementEngine, load_default_template
 
 # ---------------------------------------------------------------------------
 # Sub-pixel Kenar Tespiti Yardımcı Fonksiyonu
@@ -1010,6 +1011,122 @@ async def download_processed_image(request: MeasureRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Görüntü indirme hatası: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# SABİT ÖLÇÜM NOKTALARI ENDPOINT'LERİ
+# ---------------------------------------------------------------------------
+class FixedMeasurementRequest(BaseModel):
+    """Sabit ölçüm noktaları isteği"""
+    image_id: str
+    blur_ksize: int = 5
+    morph_ksize: int = 5
+    min_contour_area: int = 100
+
+
+@app.post("/api/measure/fixed")
+async def measure_fixed_points(request: FixedMeasurementRequest):
+    """
+    Teknik çizimdeki sabit ölçüm noktalarında (03, 04, 05, 06, 08, 17, 18, 21, 22, 24)
+    ölçüm yapar ve pass/fail değerlendirmesi yapar.
+    """
+    # İşlenmiş görüntüyü kullan (algoritma uygulanmış)
+    img = _load_image(request.image_id)
+    calibration = _get_active_calibration(request.image_id)
+    
+    # Kalibrasyon kontrolü
+    if calibration is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Kalibrasyon yapılmamış. Önce Y ekseni kalibrasyonu yapın."
+        )
+    
+    try:
+        # Kalibrasyon değerlerini al
+        # pixels_per_mm = piksel/mm (örn: 10 piksel = 1 mm ise 10)
+        y_calibration = calibration.pixels_per_mm if calibration.pixels_per_mm else 10.0
+        x_calibration = calibration.pixels_per_mm_x if calibration.pixels_per_mm_x else y_calibration
+        
+        # Profil çıkar - AYNI parametrelerle
+        profile = extract_profile(img, {
+            "blur_ksize": request.blur_ksize,
+            "morph_ksize": request.morph_ksize,
+            "min_contour_area": request.min_contour_area,
+        })
+        
+        # Sabit ölçüm motorunu başlat
+        engine = load_default_template()
+        
+        # Ölçümleri yap - piksel/mm oranını gönder
+        # y_calibration = pixels_per_mm (örn: 10 piksel/mm)
+        results = engine.perform_measurements(profile, y_calibration, x_calibration)
+        
+        # Rapor verisi oluştur
+        report = engine.generate_report_data(results)
+        
+        # Overlay görüntüsü oluştur - profile_extractor kullan
+        overlay = draw_profile_overlay(img, profile, y_calibration)
+        
+        # Ölçüm noktalarını görselleştir
+        for result in results:
+            point = next((p for p in engine.measurement_points if p['code'] == result.code), None)
+            if point and point.get('x_position_mm'):
+                x_mm = point['x_position_mm']
+                # x_start piksel cinsinden, x_mm mm cinsinden
+                # x_pixel = x_start + (x_mm * pixels_per_mm)
+                x_pixel = int(profile['x_start'] + (x_mm * y_calibration))
+                
+                # Ölçüm noktasını işaretle
+                color = (0, 255, 0) if result.status == "PASS" else (0, 0, 255)
+                cv2.circle(overlay, (x_pixel, 50), 8, color, -1)
+                cv2.putText(overlay, result.code, (x_pixel - 15, 30),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        
+        return {
+            "success": True,
+            "template_id": report['template_id'],
+            "description": report['description'],
+            "measurements": report['measurements'],
+            "summary": report['summary'],
+            "overlay_image": f"data:image/png;base64,{_image_to_base64(overlay)}",
+            "calibration": {
+                "y_pixels_per_mm": y_calibration,
+                "x_pixels_per_mm": x_calibration
+            }
+        }
+        
+    except Exception as e:
+        import traceback
+        print(f"Sabit ölçüm hatası: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Sabit ölçüm hatası: {str(e)}")
+
+
+@app.get("/api/templates")
+async def get_templates():
+    """Mevcut ölçüm şablonlarını listeler."""
+    try:
+        engine = load_default_template()
+        return {
+            "templates": [
+                {
+                    "id": engine.template.get('template_id'),
+                    "description": engine.template.get('description'),
+                    "measurement_count": len(engine.measurement_points),
+                    "points": [
+                        {
+                            "code": p['code'],
+                            "description": p['description'],
+                            "nominal": p['nominal_mm'],
+                            "tolerance": f"{p['lower_tol_mm']:+.4f} / {p['upper_tol_mm']:+.4f}"
+                        }
+                        for p in engine.measurement_points
+                    ]
+                }
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Şablon listesi hatası: {str(e)}")
 
 
 # ---------------------------------------------------------------------------

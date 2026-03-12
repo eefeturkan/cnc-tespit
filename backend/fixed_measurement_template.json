@@ -1,0 +1,129 @@
+{
+  "template_id": "CNC_PARCA_TIPI_1",
+  "description": "Teknik çizimdeki örnek CNC parçası",
+  "created_at": "2026-03-12",
+  "version": "1.0",
+  "measurement_points": [
+    {
+      "code": "03",
+      "type": "diameter",
+      "axis": "Y",
+      "x_position_mm": 5.0,
+      "nominal_mm": 14.6550,
+      "lower_tol_mm": -0.0150,
+      "upper_tol_mm": 0.0150,
+      "description": "Sol bölüm çapı - Ø14.64-14.67",
+      "unit": "mm"
+    },
+    {
+      "code": "04",
+      "type": "diameter",
+      "axis": "Y",
+      "x_position_mm": 15.0,
+      "nominal_mm": 22.9150,
+      "lower_tol_mm": -0.0130,
+      "upper_tol_mm": 0.0200,
+      "description": "Orta bölüm 1 çapı - Ø22.902-22.935",
+      "unit": "mm"
+    },
+    {
+      "code": "05",
+      "type": "diameter",
+      "axis": "Y",
+      "x_position_mm": 25.0,
+      "nominal_mm": 25.0700,
+      "lower_tol_mm": -0.0200,
+      "upper_tol_mm": 0.0200,
+      "description": "Orta bölüm 2 çapı - Ø25.05-25.09",
+      "unit": "mm"
+    },
+    {
+      "code": "06",
+      "type": "diameter",
+      "axis": "Y",
+      "x_position_mm": 35.0,
+      "nominal_mm": 25.0700,
+      "lower_tol_mm": -0.0200,
+      "upper_tol_mm": 0.0200,
+      "description": "Orta bölüm 3 çapı - Ø25.05-25.09",
+      "unit": "mm"
+    },
+    {
+      "code": "08",
+      "type": "diameter",
+      "axis": "Y",
+      "x_position_mm": 55.0,
+      "nominal_mm": 29.7000,
+      "lower_tol_mm": -0.1000,
+      "upper_tol_mm": 0.1000,
+      "description": "Sağ ana bölüm çapı - Ø29.60-29.80",
+      "unit": "mm"
+    },
+    {
+      "code": "17",
+      "type": "height",
+      "axis": "Y",
+      "x_position_mm": 10.0,
+      "y_reference": "top",
+      "nominal_mm": 4.0000,
+      "lower_tol_mm": -0.1000,
+      "upper_tol_mm": 0.1000,
+      "description": "Üst çıkıntı yüksekliği - H 3.90-4.10",
+      "unit": "mm"
+    },
+    {
+      "code": "18",
+      "type": "diameter",
+      "axis": "Y",
+      "x_position_mm": 20.0,
+      "nominal_mm": 12.9000,
+      "lower_tol_mm": -0.1000,
+      "upper_tol_mm": 0.1000,
+      "description": "Geçiş bölümü - H/Ø12.80-13.00",
+      "unit": "mm"
+    },
+    {
+      "code": "21",
+      "type": "length",
+      "axis": "X",
+      "measurement": "total_length",
+      "nominal_mm": 30.0000,
+      "lower_tol_mm": -0.2000,
+      "upper_tol_mm": 0.2000,
+      "description": "Toplam uzunluk - 29.80-30.20 BOYU",
+      "unit": "mm"
+    },
+    {
+      "code": "22",
+      "type": "length",
+      "axis": "X",
+      "measurement": "section_length",
+      "section_index": 1,
+      "nominal_mm": 18.9000,
+      "lower_tol_mm": -0.1000,
+      "upper_tol_mm": 0.1000,
+      "description": "Bölüm uzunluğu 1 - 18.80-19.00 BOYU",
+      "unit": "mm"
+    },
+    {
+      "code": "24",
+      "type": "length",
+      "axis": "X",
+      "measurement": "section_length",
+      "section_index": 2,
+      "nominal_mm": 14.0000,
+      "lower_tol_mm": -0.1000,
+      "upper_tol_mm": 0.1000,
+      "description": "Bölüm uzunluğu 2 - 13.90-14.10 BOYU",
+      "unit": "mm"
+    }
+  ],
+  "reference_point": {
+    "type": "left_edge",
+    "description": "Parçanın sol ucu referans alınır"
+  },
+  "calibration": {
+    "y_pixels_per_mm": 10.0,
+    "x_pixels_per_mm": 10.0
+  }
+}
