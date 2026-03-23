@@ -141,31 +141,40 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
     if not contours:
         raise ValueError("Parça konturu bulunamadı. Görüntü kalitesini kontrol edin.")
 
-    # Alan filtresi
-    valid_contours = [c for c in contours if cv2.contourArea(c) >= min_contour_area]
+    # Alan filtresini daha agresif yap (gürültüyü önlemek için)
+    # Eğer kullanıcı 100 gibi çok küçük bir değer gönderirse bile 
+    # en büyük konturun %10'undan küçük olanları gürültü kabul et.
+    all_areas = [cv2.contourArea(c) for c in contours]
+    max_area = max(all_areas)
+    dynamic_min_area = max(min_contour_area, max_area * 0.1)
+    
+    valid_contours = [c for c in contours if cv2.contourArea(c) >= dynamic_min_area]
     if not valid_contours:
-        raise ValueError(f"Yeterince büyük kontur bulunamadı (min alan: {min_contour_area} px²)")
+        # Fallback: Sadece en büyüğü al
+        valid_contours = [max(contours, key=cv2.contourArea)]
 
-    # Parlak yüzeyli metal parçalarda gövde bazen birden çok kontura ayrılabiliyor.
-    # Sadece en büyük konturu almak "yarım profil" hatasına yol açtığı için
-    # geçerli tüm konturları birleştirip tek maske üzerinde profil çıkarıyoruz.
+    # Sadece en büyük konturu ve ona çok yakın olanları birleştir
     main_contour = max(valid_contours, key=cv2.contourArea)
     mask = np.zeros(gray.shape, dtype=np.uint8)
+    
+    # x_start tespiti için sadece ANA konturu kullan (Gürültüye karşı EN SAĞLAM yöntem)
+    x_c, y_c, w_c, h_c = cv2.boundingRect(main_contour)
+    x_start = x_c
+    
+    # Maskeyi tüm geçerli konturlarla doldur (parça parçalanmışsa birleşsin diye)
+    # Ama sadece ana kontura yakın olanları alabiliriz. Şimdilik hepsini çiziyoruz 
+    # çünkü x_start artık sadece ana kontura bağlı.
     cv2.drawContours(mask, valid_contours, -1, 255, cv2.FILLED)
 
-    # Birleşik maskeden bbox hesapla
+    # Bounding box'ı maskeye göre güncelle (ama x_start'ı koru)
     cols_with_data = np.where(np.any(mask > 0, axis=0))[0]
     rows_with_data = np.where(np.any(mask > 0, axis=1))[0]
-    if len(cols_with_data) == 0 or len(rows_with_data) == 0:
-        raise ValueError("Parça maskesi oluşturulamadı. Görüntü kalitesini kontrol edin.")
-
-    x_start = int(cols_with_data[0])
-    x_end = int(cols_with_data[-1]) + 1  # python range için exclusive üst sınır
+    
+    # x_end'i maskeye göre bul
+    x_end = int(cols_with_data[-1]) + 1
     y_start = int(rows_with_data[0])
     y_end = int(rows_with_data[-1]) + 1
-    bbox_w = x_end - x_start
-    bbox_h = y_end - y_start
-    bbox = (x_start, y_start, bbox_w, bbox_h)
+    bbox = (x_start, y_start, x_end - x_start, y_end - y_start)
 
     top_edge = []
     bottom_edge = []
@@ -221,7 +230,8 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
 
 def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: float = 1.0,
                           sections: Optional[List] = None,
-                          matched_features: Optional[List[Dict]] = None) -> np.ndarray:
+                          matched_features: Optional[List[Dict]] = None,
+                          point_measurements: Optional[List[Dict]] = None) -> np.ndarray:
     """
     Profil verilerini ve ölçüm çizgilerini görüntü üzerine çizer.
 
@@ -231,6 +241,7 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
         calibration_ppmm: Piksel/mm oranı
         sections: Bölüm bilgileri (measurement_engine çıktısı)
         matched_features: Golden mod eşleşmiş feature listesi (opsiyonel)
+        point_measurements: Noktasal ölçüm listesi (opsiyonel)
     """
     overlay = image.copy()
     x_start = profile["x_start"]
@@ -259,59 +270,13 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
                      (x_start + i + 1, int(center_y[i + 1])),
                      (255, 165, 0), 1)
 
-    # Bölüm ölçüm çizgileri
+    # Bölüm ayraç çizgileri (kesikli gri dikey çizgiler — sadece sınır)
+    # NOT: Çap ölçüm çizgileri artık burada ÇİZİLMEZ. 
+    # Sabit X koordinatlarından çizilen ölçümler app.py tarafından çizilir.
     if sections:
         for sec in sections:
             sx = sec["x_start_abs"]
             ex = sec["x_end_abs"]
-            mid_x = (sx + ex) // 2
-
-            # Çap ölçüm çizgisi (kırmızı dikey)
-            top_y = sec.get("top_y_at_mid")
-            bot_y = sec.get("bottom_y_at_mid")
-            if top_y is not None and bot_y is not None:
-                ity = int(top_y)
-                iby = int(bot_y)
-                cv2.line(overlay, (mid_x, ity), (mid_x, iby), (0, 0, 255), 2)
-                # Çap ok uçları
-                cv2.arrowedLine(overlay, (mid_x, int((ity + iby)/2)), (mid_x, ity), (0, 0, 255), 2, tipLength=0.05)
-                cv2.arrowedLine(overlay, (mid_x, int((ity + iby)/2)), (mid_x, iby), (0, 0, 255), 2, tipLength=0.05)
-
-            # Çap ve Uzunluk etiketlerini merkeze yaz (Mockup'taki gibi sarı ve ortalı)
-            diameter_mm = sec.get("diameter_mm", 0)
-            length_mm = sec.get("length_mm", 0)
-            
-            if top_y is not None and bot_y is not None:
-                mid_y = (ity + iby) // 2
-                
-                # Etiket metinleri
-                d_label = f"cap: {diameter_mm:.2f}"
-                l_label = f"uzunluk: {length_mm:.2f}"
-                
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale = 0.5
-                thickness = 2
-                color = (0, 255, 255)  # Sarı
-                
-                # Çap etiketini ortala
-                d_size, _ = cv2.getTextSize(d_label, font, font_scale, thickness)
-                d_x = mid_x - d_size[0] // 2
-                d_y = mid_y - 5  # Merkezin biraz üstü
-                
-                # Uzunluk etiketini ortala
-                l_size, _ = cv2.getTextSize(l_label, font, font_scale, thickness)
-                l_x = mid_x - l_size[0] // 2
-                l_y = mid_y + 15 # Merkezin biraz altı
-                
-                # Arka plan için hafif gölge (okunabilirlik için)
-                cv2.putText(overlay, d_label, (d_x + 1, d_y + 1), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
-                cv2.putText(overlay, l_label, (l_x + 1, l_y + 1), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
-                
-                # Ana metinler
-                cv2.putText(overlay, d_label, (d_x, d_y), font, font_scale, color, thickness, cv2.LINE_AA)
-                cv2.putText(overlay, l_label, (l_x, l_y), font, font_scale, color, thickness, cv2.LINE_AA)
-
-            # Bölüm ayraç çizgileri (beyaz dikey kesikli)
             for draw_x in [sx, ex]:
                 for y in range(0, overlay.shape[0], 8):
                     cv2.line(overlay, (draw_x, y), (draw_x, min(y + 4, overlay.shape[0])), (100, 100, 100), 1)
@@ -358,5 +323,24 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     (0, 255, 255), 2, cv2.LINE_AA
                 )
+
+    # Noktasal ölçümleri çiz (Mavi dikey oklar)
+    if point_measurements:
+        for p in point_measurements:
+            px = p["x_abs"]
+            ty = int(p["top_y"])
+            by = int(p["bottom_y"])
+            val = p["diameter_mm"]
+            
+            color = (255, 100, 0) # Mavi tonu
+            # Dikey çizgi
+            cv2.line(overlay, (px, ty), (px, by), color, 2)
+            # Ok uçları
+            cv2.arrowedLine(overlay, (px, (ty + by) // 2), (px, ty), color, 2, tipLength=0.1)
+            cv2.arrowedLine(overlay, (px, (ty + by) // 2), (px, by), color, 2, tipLength=0.1)
+            
+            # Etiket
+            label = f"P{p['id']}: {val:.2f}"
+            cv2.putText(overlay, label, (px + 5, ty - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
 
     return overlay

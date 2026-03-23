@@ -400,6 +400,38 @@
                                     📐 Sınırlarla Ölç
                                 </button>
                             </div>
+
+                            <!-- Noktasal Ölçüm Modu -->
+                            <div class="sidebar-section-header"
+                                style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border-subtle);">
+                                Noktasal Ölçüm
+                            </div>
+                            <div class="cal-hint" style="margin-bottom:8px;">
+                                Görüntü üzerinde istediğiniz yerlere tıklayarak o noktadaki çapı ölçün.
+                            </div>
+                            <div style="display:flex; gap:8px; margin-bottom:8px;">
+                                <button class="btn-apply" id="btn-point-mode-off"
+                                    style="flex:1; background:var(--accent); border-color:var(--accent);">Kapalı</button>
+                                <button class="btn-apply" id="btn-point-mode-on"
+                                    style="flex:1; background:#1e293b; border:1px solid #334155; color:#e2e8f0;">Aktif</button>
+                            </div>
+                            <div id="point-controls" class="hidden">
+                                <div class="cal-hint">
+                                    Görüntüye tıkla: nokta ekle. Sağ tık / çift tık: sil.
+                                </div>
+                                <div class="cal-point" style="margin-top:6px;">
+                                    <span class="cal-point-label">Nokta sayısı:</span>
+                                    <span class="cal-point-value" id="point-count">0</span>
+                                </div>
+                                <button class="btn-apply" id="btn-point-clear"
+                                    style="width:100%; margin-top:8px; background:#1e293b; border:1px solid #334155; color:#94a3b8; font-size:11px;">
+                                    Tüm Noktaları Temizle
+                                </button>
+                                <button class="btn-apply btn-measure-full" id="btn-measure-points"
+                                    style="width:100%; margin-top:8px;" disabled>
+                                    🎯 Noktasal Ölçüm Yap
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -439,6 +471,8 @@
                             <canvas id="original-xcal-canvas" class="xcal-overlay-canvas"></canvas>
                             <canvas id="original-boundary-canvas"
                                 class="xcal-overlay-canvas boundary-overlay-canvas"></canvas>
+                            <canvas id="original-point-canvas"
+                                class="xcal-overlay-canvas point-overlay-canvas"></canvas>
                         </div>
                     </div>
 
@@ -451,6 +485,8 @@
                             <canvas id="processed-xcal-canvas" class="xcal-overlay-canvas"></canvas>
                             <canvas id="processed-boundary-canvas"
                                 class="xcal-overlay-canvas boundary-overlay-canvas"></canvas>
+                            <canvas id="processed-point-canvas"
+                                class="xcal-overlay-canvas point-overlay-canvas"></canvas>
                         </div>
                     </div>
 
@@ -515,6 +551,62 @@
                             </thead>
                             <tbody id="fixed-measurement-tbody"></tbody>
                         </table>
+                    </div>
+                </div>
+
+                <!-- Sabit Ölçüm İnce Ayar Paneli (Premium) -->
+                <div id="fine-tune-panel-container" class="fine-tune-panel hidden">
+                    <div class="fine-tune-header">
+                        <div class="fine-tune-title">
+                            <span>🔧</span> Sabit Ölçüm İnce Ayar: <span id="tune-point-code">--</span>
+                        </div>
+                        <div id="tune-point-desc" style="font-size: 0.75rem; color: var(--text-tertiary); margin-left: auto; margin-right: 20px;">--</div>
+                        <button id="btn-tune-close" class="btn-tune-close" title="Kapat">✖️</button>
+                    </div>
+
+                    <div class="fine-tune-controls">
+                        <!-- X-Offset Ayarı -->
+                        <div class="tune-group" id="tune-group-x">
+                            <span class="tune-label">X-Offset (px):</span>
+                            <div class="tune-actions">
+                                <button class="btn-tune" onclick="adjustValue('tune-x-input', -5)" title="-5">«</button>
+                                <button class="btn-tune" onclick="adjustValue('tune-x-input', -1)" title="-1">‹</button>
+                                <input type="number" class="tune-value-input" id="tune-x-input" style="width: 50px;">
+                                <button class="btn-tune" onclick="adjustValue('tune-x-input', 1)" title="+1">›</button>
+                                <button class="btn-tune" onclick="adjustValue('tune-x-input', 5)" title="+5">»</button>
+                            </div>
+                        </div>
+
+                        <!-- Nominal Ayarı -->
+                        <div class="tune-group" id="tune-group-nominal">
+                            <span class="tune-label">Nominal (mm):</span>
+                            <div class="tune-actions">
+                                <button class="btn-tune" onclick="adjustValue('tune-nominal-input', -0.01)">➖</button>
+                                <input type="number" class="tune-value-input" id="tune-nominal-input" step="0.001" style="width: 75px;">
+                                <button class="btn-tune" onclick="adjustValue('tune-nominal-input', 0.01)">➕</button>
+                            </div>
+                        </div>
+
+                        <!-- Tolerans Ayarları -->
+                        <div class="tune-group" id="tune-group-tols">
+                            <span class="tune-label">Alt Tol:</span>
+                            <div class="tune-actions">
+                                <input type="number" class="tune-value-input" id="tune-lower-tol-input" step="0.001" style="width: 65px;">
+                            </div>
+                            <span class="tune-label" style="margin-left: 10px;">Üst Tol:</span>
+                            <div class="tune-actions">
+                                <input type="number" class="tune-value-input" id="tune-upper-tol-input" step="0.001" style="width: 65px;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="fine-tune-footer">
+                        <span style="font-size: 11px; color: var(--text-tertiary); margin-right: auto; align-self: center; opacity: 0.7;">
+                            ℹ️ Değişiklikler şablona kaydedilecek ve ölçüm yenilenecek.
+                        </span>
+                        <button id="btn-tune-save" class="btn-tune-save">
+                            <span>💾</span> Şablona Kaydet ve Uygula
+                        </button>
                     </div>
                 </div>
 

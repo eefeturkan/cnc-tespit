@@ -214,6 +214,14 @@ class ManualBoundariesRequest(BaseModel):
     min_contour_area: int = 5000
 
 
+class ManualPointsRequest(BaseModel):
+    image_id: str
+    points: List[int]   # Mutlak x koordinatları (noktasal ölçüm için)
+    blur_ksize: int = 5
+    morph_ksize: int = 5
+    min_contour_area: int = 5000
+
+
 class ReportRequest(BaseModel):
     image_id: str
     measurement_table: List[dict]
@@ -911,6 +919,85 @@ async def measure_with_manual_boundaries(request: ManualBoundariesRequest):
         raise HTTPException(status_code=500, detail=f"Manuel ölçüm hatası: {str(e)}")
 
 
+@app.post("/api/measure/points")
+async def measure_at_points(request: ManualPointsRequest):
+    """
+    Kullanıcının tıkladığı spesifik x koordinatlarında ölçüm yap.
+    """
+    img = _load_image(request.image_id)
+    calibration = _get_active_calibration(request.image_id)
+
+    if not request.points:
+        raise HTTPException(status_code=400, detail="En az bir ölçüm noktası gerekli")
+
+    try:
+        # 1. Profil çıkar
+        profile = extract_profile(img, {
+            "blur_ksize": request.blur_ksize,
+            "morph_ksize": request.morph_ksize,
+            "min_contour_area": request.min_contour_area,
+        })
+
+        x_start = profile["x_start"]
+        x_end = profile["x_end"]
+        top_edge = profile["top_edge"]
+        bottom_edge = profile["bottom_edge"]
+        
+        point_measurements = []
+        table = []
+        
+        for i, px in enumerate(request.points):
+            # Koordinat parça sınırları içindeyse ölçüm yap
+            if x_start <= px < x_end:
+                idx = px - x_start
+                ty = top_edge[idx]
+                by = bottom_edge[idx]
+                if ty is not None and by is not None:
+                    diameter_px = by - ty
+                    diameter_mm = calibration.pixels_to_mm_y(diameter_px)
+                    
+                    point_measurements.append({
+                        "id": i + 1,
+                        "x_abs": px,
+                        "top_y": ty,
+                        "bottom_y": by,
+                        "diameter_mm": round(diameter_mm, 4)
+                    })
+                    
+                    table.append({
+                        "id": f"P{i+1:02d}",
+                        "type": "Noktasal Çap",
+                        "description": f"X={px} noktasındaki çap",
+                        "nominal_mm": round(diameter_mm, 4),
+                        "measured_mm": round(diameter_mm, 4) ,
+                        "deviation_mm": 0.0,
+                        "x_abs": px
+                    })
+
+        # Section formatına benzeterek çizdir (opsiyonel)
+        # Veya draw_profile_overlay'e point_measurements desteği ekle
+        overlay = draw_profile_overlay(img, profile, calibration.pixels_per_mm, point_measurements=point_measurements)
+        
+        summary = {
+            "total_points": len(table),
+            "mode": "points"
+        }
+
+        return {
+            "overlay_image": f"data:image/png;base64,{_image_to_base64(overlay)}",
+            "point_measurements": point_measurements,
+            "measurement_table": table,
+            "summary": summary,
+            "calibration": calibration.to_dict(),
+            "mode": "points"
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Noktasal ölçüm hatası: {str(e)}")
+
+
 # ---------------------------------------------------------------------------
 # Faz 3 Endpoint'ler — Rapor & İndirme
 # ---------------------------------------------------------------------------
@@ -1026,6 +1113,62 @@ class FixedMeasurementRequest(BaseModel):
     gradient_threshold: Optional[float] = None
 
 
+class UpdatePointRequest(BaseModel):
+    """Şablondaki bir noktayı güncelleme isteği"""
+    point_code: str
+    new_x_abs: Optional[int] = None
+    new_nominal_mm: Optional[float] = None
+    new_lower_tol: Optional[float] = None
+    new_upper_tol: Optional[float] = None
+
+
+@app.post("/api/template/update-point")
+async def update_template_point(request: UpdatePointRequest):
+    """Şablondaki belirli bir ölçüm noktasının parametrelerini günceller."""
+    template_path = PROJECT_DIR / "backend" / "fixed_measurement_template.json"
+    
+    if not template_path.exists():
+        raise HTTPException(status_code=404, detail="Şablon dosyası bulunamadı.")
+    
+    import json
+    try:
+        with open(template_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        points = data.get('measurement_points', [])
+        found = False
+        for p in points:
+            if p.get('code') == request.point_code:
+                if request.new_x_abs is not None:
+                    p['x_abs'] = request.new_x_abs
+                    # Açıklamayı da otomatik güncelle (opsiyonel ama tutarlılık için iyi)
+                    if "Sol uçtan x=" in p['description']:
+                        p['description'] = f"Ölçüm (Sol uçtan x={request.new_x_abs})"
+                
+                if request.new_nominal_mm is not None:
+                    p['nominal_mm'] = request.new_nominal_mm
+                
+                if request.new_lower_tol is not None:
+                    p['lower_tol_mm'] = request.new_lower_tol
+                    
+                if request.new_upper_tol is not None:
+                    p['upper_tol_mm'] = request.new_upper_tol
+                    
+                found = True
+                break
+        
+        if not found:
+            raise HTTPException(status_code=404, detail=f"Kod: {request.point_code} olan nokta şablonda bulunamadı.")
+            
+        with open(template_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            
+        return {"success": True, "message": f"{request.point_code} güncellendi."}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Şablon güncelleme hatası: {str(e)}")
+
+
 @app.post("/api/measure/fixed")
 async def measure_fixed_points(request: FixedMeasurementRequest):
     """
@@ -1092,7 +1235,8 @@ async def measure_fixed_points(request: FixedMeasurementRequest):
             top_y = m.get('top_y')
             bottom_y = m.get('bottom_y')
             
-            if m['type'] == 'diameter' and x_start_px and x_end_px:
+            if m['type'] == 'diameter' and x_start_px is not None and x_end_px is not None:
+                # Sabit X ölçümleri için tam ortayı (istenilen X) bul
                 mid_x = (x_start_px + x_end_px) // 2
                 
                 # Çap çizgisi (dikey ok)
@@ -1105,22 +1249,55 @@ async def measure_fixed_points(request: FixedMeasurementRequest):
                 
                 # Etiket
                 label_y = int(top_y - 20) if top_y is not None else 40
+                
+                # Arka plan gölgesi
+                cv2.putText(overlay, m['code'], (mid_x - 11, label_y + 1),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3, cv2.LINE_AA)
                 cv2.putText(overlay, m['code'], (mid_x - 12, label_y),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
             
-            elif m['type'] == 'length' and x_start_px and x_end_px:
-                # Uzunluk çizgisi (yatay ok)
+            elif m['type'] == 'length' and x_start_px is not None and x_end_px is not None:
+                # Uzunluk çizgileri için renk ve yükseklik ayarı (Stacked and color-coded)
+                code = m['code']
                 h = overlay.shape[0]
-                y_line = h - 30
-                cv2.line(overlay, (x_start_px, y_line), (x_end_px, y_line), color, 2)
-                cv2.arrowedLine(overlay, ((x_start_px + x_end_px) // 2, y_line),
-                               (x_start_px, y_line), color, 2, tipLength=0.02)
-                cv2.arrowedLine(overlay, ((x_start_px + x_end_px) // 2, y_line),
-                               (x_end_px, y_line), color, 2, tipLength=0.02)
                 
-                # Etiket
-                cv2.putText(overlay, m['code'], ((x_start_px + x_end_px) // 2 - 10, y_line - 8),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+                # Renk ve Y pozisyonu seçimi
+                if code == "21": # Sarı (En alt)
+                    l_color = (0, 255, 255)
+                    y_line = h - 20
+                elif code == "22": # Yeşil (Orta)
+                    l_color = (0, 255, 0)
+                    y_line = h - 40
+                elif code == "24": # Mavi (En üst)
+                    l_color = (255, 120, 0)
+                    y_line = h - 60
+                else:
+                    l_color = color # Varsayılan PASS/FAIL rengi
+                    y_line = h - 80
+                
+                # Yatay çizgi
+                cv2.line(overlay, (x_start_px, y_line), (x_end_px, y_line), l_color, 2)
+                
+                # Sınır "tick" işaretleri (dikey kısa çizgiler)
+                tick_h = 5
+                cv2.line(overlay, (x_start_px, y_line - tick_h), (x_start_px, y_line + tick_h), l_color, 2)
+                cv2.line(overlay, (x_end_px, y_line - tick_h), (x_end_px, y_line + tick_h), l_color, 2)
+                
+                # Ok uçları
+                cv2.arrowedLine(overlay, ((x_start_px + x_end_px) // 2 + 10, y_line),
+                               (x_start_px, y_line), l_color, 2, tipLength=0.03)
+                cv2.arrowedLine(overlay, ((x_start_px + x_end_px) // 2 - 10, y_line),
+                               (x_end_px, y_line), l_color, 2, tipLength=0.03)
+                
+                # Etiket (Siyah arka planlı küçük font)
+                l_text = f"{m['code']}: {m['measured']}mm"
+                l_size, _ = cv2.getTextSize(l_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+                tx = (x_start_px + x_end_px) // 2 - l_size[0] // 2
+                ty = y_line - 8
+                
+                # Arka plan gölgesi
+                cv2.putText(overlay, l_text, (tx + 1, ty + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.putText(overlay, l_text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.4, l_color, 1, cv2.LINE_AA)
         
         return {
             "success": True,

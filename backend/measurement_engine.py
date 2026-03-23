@@ -9,7 +9,7 @@ from calibration import CalibrationProfile
 
 
 def detect_sections(profile: Dict, calibration: CalibrationProfile,
-                    min_section_width_px: int = 20,
+                    min_section_width_px: int = 5,
                     gradient_threshold: float = None) -> List[Dict]:
     """
     Çap profilindeki bölümleri (sabit çap bölgeleri) tespit eder.
@@ -38,10 +38,10 @@ def detect_sections(profile: Dict, calibration: CalibrationProfile,
     # None değerleri 0 ile değiştir
     diameter_px = np.nan_to_num(diameter_px, nan=0.0)
 
-    # Kısa bir median filtre ile gürültüyü temizle
-    if len(diameter_px) > 5:
+    # Kısa bir median filtre ile gürültüyü temizle (Dar özellikleri korumak için küçük size)
+    if len(diameter_px) > 3:
         from scipy.ndimage import median_filter
-        diameter_smooth = median_filter(diameter_px, size=7)
+        diameter_smooth = median_filter(diameter_px, size=3)
     else:
         diameter_smooth = diameter_px.copy()
 
