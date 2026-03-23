@@ -1022,19 +1022,25 @@ class FixedMeasurementRequest(BaseModel):
     blur_ksize: int = 5
     morph_ksize: int = 5
     min_contour_area: int = 100
+    min_section_width_px: int = 20
+    gradient_threshold: Optional[float] = None
 
 
 @app.post("/api/measure/fixed")
 async def measure_fixed_points(request: FixedMeasurementRequest):
     """
     Teknik çizimdeki sabit ölçüm noktalarında (03, 04, 05, 06, 08, 17, 18, 21, 22, 24)
-    ölçüm yapar ve pass/fail değerlendirmesi yapar.
+    bölüm-tabanlı ölçüm yapar ve pass/fail değerlendirmesi yapar.
+    
+    Yöntem:
+    1. Profil çıkar (parça silüeti)
+    2. Bölümleri tespit et (otomatik gradient analizi)
+    3. Template'deki section_index ile bölümleri eşle
+    4. Her nokta için ölçümü ilgili bölümden al
     """
-    # İşlenmiş görüntüyü kullan (algoritma uygulanmış)
     img = _load_image(request.image_id)
     calibration = _get_active_calibration(request.image_id)
     
-    # Kalibrasyon kontrolü
     if calibration is None:
         raise HTTPException(
             status_code=400,
@@ -1042,45 +1048,79 @@ async def measure_fixed_points(request: FixedMeasurementRequest):
         )
     
     try:
-        # Kalibrasyon değerlerini al
-        # pixels_per_mm = piksel/mm (örn: 10 piksel = 1 mm ise 10)
         y_calibration = calibration.pixels_per_mm if calibration.pixels_per_mm else 10.0
         x_calibration = calibration.pixels_per_mm_x if calibration.pixels_per_mm_x else y_calibration
         
-        # Profil çıkar - AYNI parametrelerle
+        # 1. Profil çıkar
         profile = extract_profile(img, {
             "blur_ksize": request.blur_ksize,
             "morph_ksize": request.morph_ksize,
             "min_contour_area": request.min_contour_area,
         })
         
-        # Sabit ölçüm motorunu başlat
+        # 2. Bölümleri tespit et (mevcut detect_sections ile)
+        sections = detect_sections(
+            profile, calibration,
+            min_section_width_px=request.min_section_width_px,
+            gradient_threshold=request.gradient_threshold,
+        )
+        
+        print(f"[Sabit Ölçüm] Tespit edilen bölüm sayısı: {len(sections)}")
+        for i, sec in enumerate(sections):
+            print(f"  Bölüm {i}: x={sec['x_start_abs']}-{sec['x_end_abs']} "
+                  f"çap={sec['diameter_mm']:.3f}mm uzunluk={sec['length_mm']:.3f}mm")
+        
+        # 3. Sabit ölçüm motorunu başlat
         engine = load_default_template()
         
-        # Ölçümleri yap - piksel/mm oranını gönder
-        # y_calibration = pixels_per_mm (örn: 10 piksel/mm)
-        results = engine.perform_measurements(profile, y_calibration, x_calibration)
+        # 4. Ölçümleri yap — bölüm listesini de gönder
+        results = engine.perform_measurements(
+            profile, sections, y_calibration, x_calibration
+        )
         
-        # Rapor verisi oluştur
+        # 5. Rapor verisi oluştur
         report = engine.generate_report_data(results)
         
-        # Overlay görüntüsü oluştur - profile_extractor kullan
-        overlay = draw_profile_overlay(img, profile, y_calibration)
+        # 6. Overlay görüntüsü oluştur
+        overlay = draw_profile_overlay(img, profile, y_calibration, sections)
         
-        # Ölçüm noktalarını görselleştir
-        for result in results:
-            point = next((p for p in engine.measurement_points if p['code'] == result.code), None)
-            if point and point.get('x_position_mm'):
-                x_mm = point['x_position_mm']
-                # x_start piksel cinsinden, x_mm mm cinsinden
-                # x_pixel = x_start + (x_mm * pixels_per_mm)
-                x_pixel = int(profile['x_start'] + (x_mm * y_calibration))
+        # Ölçüm noktalarını overlay üzerine çiz
+        for m in report['measurements']:
+            color = (0, 255, 0) if m['status'] == 'PASS' else (0, 0, 255)
+            x_start_px = m.get('x_pixel_start')
+            x_end_px = m.get('x_pixel_end')
+            top_y = m.get('top_y')
+            bottom_y = m.get('bottom_y')
+            
+            if m['type'] == 'diameter' and x_start_px and x_end_px:
+                mid_x = (x_start_px + x_end_px) // 2
                 
-                # Ölçüm noktasını işaretle
-                color = (0, 255, 0) if result.status == "PASS" else (0, 0, 255)
-                cv2.circle(overlay, (x_pixel, 50), 8, color, -1)
-                cv2.putText(overlay, result.code, (x_pixel - 15, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                # Çap çizgisi (dikey ok)
+                if top_y is not None and bottom_y is not None:
+                    ity = int(top_y)
+                    iby = int(bottom_y)
+                    cv2.line(overlay, (mid_x, ity - 5), (mid_x, iby + 5), color, 2)
+                    cv2.arrowedLine(overlay, (mid_x, (ity + iby) // 2), (mid_x, ity - 5), color, 2, tipLength=0.08)
+                    cv2.arrowedLine(overlay, (mid_x, (ity + iby) // 2), (mid_x, iby + 5), color, 2, tipLength=0.08)
+                
+                # Etiket
+                label_y = int(top_y - 20) if top_y is not None else 40
+                cv2.putText(overlay, m['code'], (mid_x - 12, label_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
+            
+            elif m['type'] == 'length' and x_start_px and x_end_px:
+                # Uzunluk çizgisi (yatay ok)
+                h = overlay.shape[0]
+                y_line = h - 30
+                cv2.line(overlay, (x_start_px, y_line), (x_end_px, y_line), color, 2)
+                cv2.arrowedLine(overlay, ((x_start_px + x_end_px) // 2, y_line),
+                               (x_start_px, y_line), color, 2, tipLength=0.02)
+                cv2.arrowedLine(overlay, ((x_start_px + x_end_px) // 2, y_line),
+                               (x_end_px, y_line), color, 2, tipLength=0.02)
+                
+                # Etiket
+                cv2.putText(overlay, m['code'], ((x_start_px + x_end_px) // 2 - 10, y_line - 8),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
         
         return {
             "success": True,
@@ -1088,6 +1128,7 @@ async def measure_fixed_points(request: FixedMeasurementRequest):
             "description": report['description'],
             "measurements": report['measurements'],
             "summary": report['summary'],
+            "sections_detected": len(sections),
             "overlay_image": f"data:image/png;base64,{_image_to_base64(overlay)}",
             "calibration": {
                 "y_pixels_per_mm": y_calibration,

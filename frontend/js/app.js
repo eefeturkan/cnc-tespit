@@ -1915,7 +1915,7 @@ async function init() {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Sabit ölçüm noktalarında ölçüm yapar (03, 04, 05, 06, 08, 17, 18, 21, 22, 24)
+ * Sabit ölçüm noktalarında bölüm-tabanlı ölçüm yapar (03, 04, 05, 06, 08, 17, 18, 21, 22, 24)
  */
 async function performFixedMeasurement() {
     if (!state.imageId) {
@@ -1931,7 +1931,6 @@ async function performFixedMeasurement() {
     showLoading(true);
     
     try {
-        // İşlenmiş görüntüyü kullan (algoritma uygulanmış)
         const imageIdToUse = state.processedImageId || state.imageId;
         
         const response = await fetch('/api/measure/fixed', {
@@ -1942,6 +1941,8 @@ async function performFixedMeasurement() {
                 blur_ksize: state.measureParams.blur_ksize,
                 morph_ksize: state.measureParams.morph_ksize,
                 min_contour_area: state.measureParams.min_contour_area,
+                min_section_width_px: state.measureParams.min_section_width_px,
+                gradient_threshold: state.measureParams.gradient_threshold,
             }),
         });
         
@@ -1954,7 +1955,8 @@ async function performFixedMeasurement() {
         
         if (data.success) {
             displayFixedMeasurementResults(data);
-            showToast(`Sabit ölçüm tamamlandı: ${data.summary.pass}/${data.summary.total} PASS`, 'success');
+            const sectionsInfo = data.sections_detected ? ` (${data.sections_detected} bölüm tespit edildi)` : '';
+            showToast(`Sabit ölçüm tamamlandı: ${data.summary.pass}/${data.summary.total} PASS${sectionsInfo}`, 'success');
         } else {
             throw new Error('Ölçüm başarısız');
         }
@@ -1979,13 +1981,14 @@ function displayFixedMeasurementResults(data) {
     // Paneli göster
     panel.classList.remove('hidden');
     
-    // Özet bilgisi
+    // Özet bilgisi — bölüm sayısını da göster
     const passRate = data.summary.pass_rate.toFixed(1);
-    const passColor = data.summary.fail === 0 ? '#16a34a' : '#dc2626';
+    const passColor = data.summary.fail === 0 ? '#4ade80' : '#f87171';
+    const sectionsInfo = data.sections_detected ? ` | ${data.sections_detected} bölüm` : '';
     summary.innerHTML = `
         <span style="color: ${passColor}; font-weight: bold;">
             ${data.summary.pass} PASS / ${data.summary.fail} FAIL
-            (${passRate}%)
+            (${passRate}%)${sectionsInfo}
         </span>
     `;
     
@@ -1994,27 +1997,29 @@ function displayFixedMeasurementResults(data) {
     
     data.measurements.forEach((m, index) => {
         const row = document.createElement('tr');
-        row.style.backgroundColor = index % 2 === 0 ? '#ffffff' : '#f8fafc';
         
         // Durum rengi
-        const statusColor = m.status === 'PASS' ? '#16a34a' : '#dc2626';
-        const statusBg = m.status === 'PASS' ? '#dcfce7' : '#fee2e2';
+        const statusColor = m.status === 'PASS' ? '#4ade80' : '#f87171';
+        const statusBg = m.status === 'PASS' ? 'rgba(74, 222, 128, 0.15)' : 'rgba(248, 113, 113, 0.15)';
         
         // Sapma rengi
         const deviation = parseFloat(m.deviation);
-        const deviationColor = Math.abs(deviation) < 0.01 ? '#16a34a' :
-                              Math.abs(deviation) < 0.05 ? '#ca8a04' : '#dc2626';
+        const deviationColor = Math.abs(deviation) < 0.01 ? '#4ade80' :
+                              Math.abs(deviation) < 0.05 ? '#fbbf24' : '#f87171';
+        
+        // Tip etiketi
+        const typeLabel = m.type === 'diameter' ? '⌀ Çap' : '═ Uzunluk';
         
         row.innerHTML = `
-            <td style="font-weight: bold; text-align: center;">${m.code}</td>
-            <td style="text-align: center;">${getMeasurementTypeLabel(m.type)}</td>
-            <td style="font-size: 12px;">${m.description}</td>
-            <td style="text-align: right; font-family: monospace;">${m.nominal}</td>
-            <td style="text-align: right; font-family: monospace; font-weight: bold;">${m.measured}</td>
-            <td style="text-align: right; font-family: monospace; color: ${deviationColor};">
+            <td style="font-weight: bold; text-align: center; color: #e2e8f0;">${m.code}</td>
+            <td style="text-align: center; color: #94a3b8;">${typeLabel}</td>
+            <td style="font-size: 12px; color: #94a3b8;">${m.description}</td>
+            <td style="text-align: right; font-family: 'JetBrains Mono', monospace; color: #cbd5e1;">${m.nominal}</td>
+            <td style="text-align: right; font-family: 'JetBrains Mono', monospace; font-weight: bold; color: #e2e8f0;">${m.measured}</td>
+            <td style="text-align: right; font-family: 'JetBrains Mono', monospace; color: ${deviationColor};">
                 ${deviation >= 0 ? '+' : ''}${m.deviation}
             </td>
-            <td style="text-align: center; font-size: 11px;">
+            <td style="text-align: center; font-size: 11px; font-family: 'JetBrains Mono', monospace; color: #94a3b8;">
                 ${m.lower_tol} / ${m.upper_tol}
             </td>
             <td style="text-align: center;">
@@ -2031,6 +2036,7 @@ function displayFixedMeasurementResults(data) {
     // Overlay görüntüsünü güncelle
     if (data.overlay_image) {
         DOM.processedImage.src = data.overlay_image;
+        showImagePanels();
     }
 }
 

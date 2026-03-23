@@ -1,20 +1,28 @@
 """
-Sabit Ölçüm Noktaları Motoru
-Teknik çizimdeki sabit noktalarda ölçüm yapar ve pass/fail değerlendirmesi yapar.
+Sabit Ölçüm Noktaları Motoru v2.0 — Bölüm Tabanlı (Section-Based)
+
+Teknik çizimdeki sabit ölçüm noktalarını, otomatik tespit edilen profil bölümlerine
+eşleyerek ölçüm yapar. x_position_mm yerine section_index kullanır.
+
+Çap ölçümleri: Bölümün merkez bölgesindeki medyan çap
+Uzunluk ölçümleri: Bölüm sınırları arası piksel mesafeden X kalibrasyonu ile mm
+
+Bu yaklaşım kamera pozisyonu, zoom ve ROI değişikliklerine dayanıklıdır.
 """
 
 import json
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 
 @dataclass
 class MeasurementResult:
     """Ölçüm sonucu veri yapısı"""
     code: str
-    measurement_type: str  # 'diameter', 'length', 'height'
+    measurement_type: str  # 'diameter', 'length'
+    method: str            # ölçüm yöntemi
     nominal_mm: float
     measured_mm: float
     deviation_mm: float
@@ -25,19 +33,22 @@ class MeasurementResult:
     status: str  # "PASS" veya "FAIL"
     description: str
     unit: str
+    section_info: str  # hangi bölümden ölçüldüğünü açıklar
+    x_pixel_start: Optional[int] = None  # overlay çizimi için
+    x_pixel_end: Optional[int] = None
+    top_y: Optional[float] = None
+    bottom_y: Optional[float] = None
 
 
 class FixedMeasurementEngine:
     """
-    Sabit ölçüm noktaları motoru.
-    Parça profilinden belirli X konumlarında ölçüm yapar.
+    Bölüm tabanlı sabit ölçüm motoru.
+    
+    Parça profilinden bölüm tespiti yapılır, ardından her ölçüm noktası
+    template'deki section_index ile ilgili bölüme eşlenir.
     """
     
     def __init__(self, template_path: Optional[str] = None):
-        """
-        Args:
-            template_path: JSON şablon dosyasının yolu
-        """
         self.template = None
         self.measurement_points = []
         
@@ -45,15 +56,7 @@ class FixedMeasurementEngine:
             self.load_template(template_path)
     
     def load_template(self, template_path: str) -> bool:
-        """
-        JSON şablon dosyasını yükler.
-        
-        Args:
-            template_path: JSON dosya yolu
-            
-        Returns:
-            Başarılı ise True
-        """
+        """JSON şablon dosyasını yükler."""
         try:
             with open(template_path, 'r', encoding='utf-8') as f:
                 self.template = json.load(f)
@@ -63,137 +66,224 @@ class FixedMeasurementEngine:
             print(f"Şablon yükleme hatası: {e}")
             return False
     
-    def find_reference_point(self, profile: Dict) -> int:
-        """
-        Parçanın referans noktasını bulur (sol uç).
-        
-        Args:
-            profile: Profil verisi (profile_extractor çıktısı)
-            
-        Returns:
-            Referans X koordinatı (piksel)
-        """
-        # Sol uç = profilin başlangıç noktası
-        return profile.get('x_start', 0)
+    # ─── Çap Ölçüm Metotları ───────────────────────────────────────
     
-    def measure_at_position(self, profile: Dict, x_mm: float, 
-                           y_calibration: float) -> Optional[float]:
+    def measure_diameter_at_section_center(
+        self, 
+        section: Dict, 
+        profile: Dict, 
+        y_calibration: float,
+        center_ratio: float = 0.7
+    ) -> Tuple[Optional[float], Optional[int], Optional[int], Optional[float], Optional[float]]:
         """
-        Belirli X konumunda çap ölçümü yapar.
+        Bölümün merkez bölgesindeki medyan çapı ölçer.
+        
+        Tek bir piksel yerine bölümün merkez %ratio kısmındaki tüm çap
+        değerlerinin medyanını alarak gürültüye dayanıklı ölçüm yapar.
         
         Args:
+            section: Bölüm verisi (detect_sections çıktısı)
             profile: Profil verisi
-            x_mm: X konumu (mm)
             y_calibration: Y kalibrasyonu (piksel/mm)
+            center_ratio: Bölümün yüzde kaçlık merkez kısmından ölçüm yapılacağı
             
         Returns:
-            Çap değeri (mm) veya None
+            (diameter_mm, x_start_px, x_end_px, top_y, bottom_y)
         """
-        # Referans noktasını bul
-        x_ref = self.find_reference_point(profile)
-        
-        # X konumunu piksele çevir
-        x_pixel = int(x_ref + x_mm * y_calibration)  # y_calibration = pixels_per_mm
-        
-        # Profil verilerini al
-        diameter_px = profile.get('diameter_px', [])
+        diameter_px_arr = np.array(profile.get('diameter_px', []), dtype=float)
         top_edge = profile.get('top_edge', [])
         bottom_edge = profile.get('bottom_edge', [])
         x_start = profile.get('x_start', 0)
         
-        if not diameter_px or x_pixel < x_start or x_pixel >= x_start + len(diameter_px):
-            return None
+        # Bölüm sınırları (profil-göreli indeksler)
+        s_rel = section['x_start_rel']
+        e_rel = section['x_end_rel']
+        width = e_rel - s_rel
         
-        # O konumdaki çap değerini al
-        idx = x_pixel - x_start
-        if idx < 0 or idx >= len(diameter_px):
-            return None
+        if width <= 0:
+            return None, None, None, None, None
         
-        diameter_pixel = diameter_px[idx]
-        if diameter_pixel is None or diameter_pixel <= 0:
-            return None
+        # Merkez bölgeyi hesapla
+        margin = int(width * (1 - center_ratio) / 2)
+        center_start = s_rel + margin
+        center_end = e_rel - margin
         
-        # Pikselden mm'ye çevir
-        diameter_mm = diameter_pixel / y_calibration
+        if center_end <= center_start:
+            center_start = s_rel
+            center_end = e_rel
         
-        return diameter_mm
+        # Merkez bölgedeki geçerli çap değerlerini al
+        segment = diameter_px_arr[center_start:center_end]
+        valid = segment[segment > 0]
+        
+        if len(valid) == 0:
+            return None, None, None, None, None
+        
+        # Medyan çap (gürültüye dayanıklı)
+        median_diameter_px = float(np.median(valid))
+        diameter_mm = median_diameter_px / y_calibration
+        
+        # Orta noktadaki üst/alt kenar (overlay çizimi için)
+        mid_idx = (center_start + center_end) // 2
+        top_y = top_edge[mid_idx] if mid_idx < len(top_edge) and top_edge[mid_idx] is not None else None
+        bot_y = bottom_edge[mid_idx] if mid_idx < len(bottom_edge) and bottom_edge[mid_idx] is not None else None
+        
+        # Piksel koordinatları (mutlak)
+        x_px_start = x_start + center_start
+        x_px_end = x_start + center_end
+        
+        return diameter_mm, x_px_start, x_px_end, top_y, bot_y
     
-    def measure_total_length(self, profile: Dict, 
-                            x_calibration: float) -> Optional[float]:
+    def measure_diameter_at_boundary(
+        self,
+        sections: List[Dict],
+        section_index: int,
+        boundary_side: str,
+        profile: Dict,
+        y_calibration: float,
+        sample_width_px: int = 5
+    ) -> Tuple[Optional[float], Optional[int], Optional[int], Optional[float], Optional[float]]:
+        """
+        İki bölüm sınırındaki çapı ölçer.
+        
+        Args:
+            sections: Tüm bölümler
+            section_index: Referans bölüm indeksi
+            boundary_side: 'left' veya 'right' — bölümün hangi tarafından ölçüleceği
+            profile: Profil verisi
+            y_calibration: Y kalibrasyonu (piksel/mm)
+            sample_width_px: Sınır etrafında kaç pikselik alan örnekleneceği
+            
+        Returns:
+            (diameter_mm, x_start_px, x_end_px, top_y, bottom_y)
+        """
+        if section_index < 0 or section_index >= len(sections):
+            return None, None, None, None, None
+        
+        section = sections[section_index]
+        diameter_px_arr = np.array(profile.get('diameter_px', []), dtype=float)
+        top_edge = profile.get('top_edge', [])
+        bottom_edge = profile.get('bottom_edge', [])
+        x_start = profile.get('x_start', 0)
+        
+        # Sınır noktası
+        if boundary_side == 'right':
+            boundary_x_rel = section['x_end_rel']
+        else:
+            boundary_x_rel = section['x_start_rel']
+        
+        # Sınır etrafındaki örnekleme aralığı
+        sample_start = max(0, boundary_x_rel - sample_width_px)
+        sample_end = min(len(diameter_px_arr), boundary_x_rel + sample_width_px)
+        
+        segment = diameter_px_arr[sample_start:sample_end]
+        valid = segment[segment > 0]
+        
+        if len(valid) == 0:
+            return None, None, None, None, None
+        
+        median_diameter_px = float(np.median(valid))
+        diameter_mm = median_diameter_px / y_calibration
+        
+        # Overlay için
+        mid_idx = boundary_x_rel
+        top_y = top_edge[mid_idx] if mid_idx < len(top_edge) and top_edge[mid_idx] is not None else None
+        bot_y = bottom_edge[mid_idx] if mid_idx < len(bottom_edge) and bottom_edge[mid_idx] is not None else None
+        
+        x_px_start = x_start + sample_start
+        x_px_end = x_start + sample_end
+        
+        return diameter_mm, x_px_start, x_px_end, top_y, bot_y
+    
+    # ─── Uzunluk Ölçüm Metotları ──────────────────────────────────
+    
+    def measure_section_length(
+        self,
+        section: Dict,
+        x_calibration: float
+    ) -> Tuple[Optional[float], Optional[int], Optional[int]]:
+        """
+        Tek bölümün uzunluğunu ölçer.
+        
+        Returns:
+            (length_mm, x_start_px, x_end_px)
+        """
+        width_px = section.get('width_px', 0)
+        if width_px <= 0 or x_calibration <= 0:
+            return None, None, None
+        
+        length_mm = width_px / x_calibration
+        return length_mm, section['x_start_abs'], section['x_end_abs']
+    
+    def measure_multi_section_length(
+        self,
+        sections: List[Dict],
+        section_start: int,
+        section_end: int,
+        x_calibration: float
+    ) -> Tuple[Optional[float], Optional[int], Optional[int]]:
+        """
+        Birden fazla bölümün toplam uzunluğunu ölçer.
+        section_start'tan section_end'e kadar (dahil) tüm bölümlerin uzunluk toplamı.
+        
+        Returns:
+            (length_mm, x_start_px, x_end_px)
+        """
+        if section_start < 0 or section_end >= len(sections):
+            return None, None, None
+        if section_start > section_end:
+            return None, None, None
+        
+        # İlk bölümün başından son bölümün sonuna kadar mesafe
+        x_start_px = sections[section_start]['x_start_abs']
+        x_end_px = sections[section_end]['x_end_abs']
+        total_px = x_end_px - x_start_px
+        
+        if total_px <= 0 or x_calibration <= 0:
+            return None, None, None
+        
+        length_mm = total_px / x_calibration
+        return length_mm, x_start_px, x_end_px
+    
+    def measure_total_length(
+        self,
+        profile: Dict,
+        x_calibration: float
+    ) -> Tuple[Optional[float], Optional[int], Optional[int]]:
         """
         Parçanın toplam uzunluğunu ölçer.
         
-        Args:
-            profile: Profil verisi
-            x_calibration: X kalibrasyonu (piksel/mm)
-            
         Returns:
-            Uzunluk (mm) veya None
+            (length_mm, x_start_px, x_end_px)
         """
         diameter_px = profile.get('diameter_px', [])
-        if not diameter_px:
-            return None
+        x_start = profile.get('x_start', 0)
+        
+        if not diameter_px or x_calibration <= 0:
+            return None, None, None
         
         # Geçerli çap değerlerinin aralığını bul
-        valid_indices = [i for i, d in enumerate(diameter_px) 
-                        if d is not None and d > 0]
+        valid_indices = [i for i, d in enumerate(diameter_px) if d is not None and d > 0]
         
         if not valid_indices:
-            return None
+            return None, None, None
         
-        length_px = max(valid_indices) - min(valid_indices)
+        first_valid = min(valid_indices)
+        last_valid = max(valid_indices)
+        length_px = last_valid - first_valid
         length_mm = length_px / x_calibration
         
-        return length_mm
+        return length_mm, x_start + first_valid, x_start + last_valid
     
-    def measure_section_lengths(self, profile: Dict,
-                               x_calibration: float) -> List[float]:
-        """
-        Her bölümün uzunluğunu ölçer.
-        
-        Args:
-            profile: Profil verisi
-            x_calibration: X kalibrasyonu (piksel/mm)
-            
-        Returns:
-            Bölüm uzunlukları listesi (mm)
-        """
-        from measurement_engine import detect_sections
-        from calibration import CalibrationProfile
-        
-        # Geçici kalibrasyon profili oluştur (sadece piksel/mm değerleri için)
-        temp_calibration = CalibrationProfile(
-            pixels_per_mm=x_calibration,
-            pixels_per_mm_x=x_calibration,
-            pixels_per_mm_y=x_calibration
-        )
-        
-        # Bölümleri tespit et
-        sections = detect_sections(profile, temp_calibration)
-        
-        lengths_mm = []
-        for section in sections:
-            x_start = section.get('x_start_abs', 0)
-            x_end = section.get('x_end_abs', 0)
-            length_px = x_end - x_start
-            length_mm = length_px / x_calibration
-            lengths_mm.append(length_mm)
-        
-        return lengths_mm
+    # ─── Pass/Fail Değerlendirmesi ─────────────────────────────────
     
     def evaluate_pass_fail(self, measured: float, nominal: float,
                           lower_tol: float, upper_tol: float) -> Tuple[str, float]:
         """
         Ölçüm değerini toleranslarla karşılaştırır.
         
-        Args:
-            measured: Ölçülen değer
-            nominal: Nominal değer
-            lower_tol: Alt tolerans
-            upper_tol: Üst tolerans
-            
         Returns:
-            (status, deviation) - "PASS" veya "FAIL", sapma değeri
+            (status, deviation) — "PASS" veya "FAIL", sapma değeri
         """
         deviation = measured - nominal
         min_limit = nominal + lower_tol
@@ -204,14 +294,21 @@ class FixedMeasurementEngine:
         else:
             return "FAIL", deviation
     
-    def perform_measurements(self, profile: Dict, 
-                            y_calibration: float,
-                            x_calibration: float) -> List[MeasurementResult]:
+    # ─── Ana Ölçüm Fonksiyonu ─────────────────────────────────────
+    
+    def perform_measurements(
+        self,
+        profile: Dict,
+        sections: List[Dict],
+        y_calibration: float,
+        x_calibration: float
+    ) -> List[MeasurementResult]:
         """
-        Tüm sabit ölçüm noktalarında ölçüm yapar.
+        Tüm sabit ölçüm noktalarında bölüm-tabanlı ölçüm yapar.
         
         Args:
-            profile: Profil verisi
+            profile: Profil verisi (profile_extractor çıktısı)
+            sections: Bölüm listesi (detect_sections çıktısı)
             y_calibration: Y kalibrasyonu (piksel/mm)
             x_calibration: X kalibrasyonu (piksel/mm)
             
@@ -219,46 +316,84 @@ class FixedMeasurementEngine:
             Ölçüm sonuçları listesi
         """
         results = []
+        num_sections = len(sections)
         
-        # Bölüm uzunluklarını önceden hesapla
-        section_lengths = self.measure_section_lengths(profile, x_calibration)
+        expected_sections = self.template.get('notes', {}).get('expected_sections', 0)
+        if expected_sections > 0 and num_sections != expected_sections:
+            print(f"⚠️ Uyarı: Beklenen {expected_sections} bölüm, tespit edilen {num_sections} bölüm")
         
         for point in self.measurement_points:
             code = point['code']
             point_type = point['type']
-            axis = point['axis']
+            method = point.get('method', 'section_center')
             nominal = point['nominal_mm']
             lower_tol = point['lower_tol_mm']
             upper_tol = point['upper_tol_mm']
             description = point['description']
-            unit = point['unit']
+            unit = point.get('unit', 'mm')
             
             measured = None
+            section_info = ""
+            x_start_px = None
+            x_end_px = None
+            top_y = None
+            bottom_y = None
             
-            if point_type == 'diameter' and axis == 'Y':
-                # Çap ölçümü
-                x_mm = point.get('x_position_mm', 0)
-                measured = self.measure_at_position(profile, x_mm, y_calibration)
+            # ─── Çap Ölçümleri ───
+            if point_type == 'diameter' and method == 'section_center':
+                section_idx = point.get('section_index', 0)
+                center_ratio = point.get('center_ratio', 0.7)
                 
-            elif point_type == 'height' and axis == 'Y':
-                # Yükseklik ölçümü (şimdilik çap gibi)
-                x_mm = point.get('x_position_mm', 0)
-                measured = self.measure_at_position(profile, x_mm, y_calibration)
-                
-            elif point_type == 'length' and axis == 'X':
-                # Uzunluk ölçümü
-                measurement = point.get('measurement', 'total_length')
-                
-                if measurement == 'total_length':
-                    measured = self.measure_total_length(profile, x_calibration)
-                elif measurement == 'section_length':
-                    section_idx = point.get('section_index', 0)
-                    if section_idx < len(section_lengths):
-                        measured = section_lengths[section_idx]
-                    else:
-                        measured = None
+                if section_idx < num_sections:
+                    section = sections[section_idx]
+                    measured, x_start_px, x_end_px, top_y, bottom_y = \
+                        self.measure_diameter_at_section_center(
+                            section, profile, y_calibration, center_ratio
+                        )
+                    section_info = f"Bölüm {section_idx + 1} merkezi (ratio={center_ratio})"
+                else:
+                    section_info = f"Bölüm {section_idx + 1} bulunamadı (toplam: {num_sections})"
             
-            # Değerlendirme
+            elif point_type == 'diameter' and method == 'section_boundary':
+                section_idx = point.get('section_index', 0)
+                boundary_side = point.get('boundary_side', 'right')
+                sample_width = point.get('sample_width_px', 5)
+                
+                measured, x_start_px, x_end_px, top_y, bottom_y = \
+                    self.measure_diameter_at_boundary(
+                        sections, section_idx, boundary_side,
+                        profile, y_calibration, sample_width
+                    )
+                section_info = f"Bölüm {section_idx + 1} {boundary_side} sınırı"
+            
+            # ─── Uzunluk Ölçümleri ───
+            elif point_type == 'length' and method == 'section_length':
+                section_idx = point.get('section_index', 0)
+                
+                if section_idx < num_sections:
+                    section = sections[section_idx]
+                    measured, x_start_px, x_end_px = \
+                        self.measure_section_length(section, x_calibration)
+                    section_info = f"Bölüm {section_idx + 1} uzunluğu"
+                else:
+                    section_info = f"Bölüm {section_idx + 1} bulunamadı"
+            
+            elif point_type == 'length' and method == 'multi_section_length':
+                s_start = point.get('section_start', 0)
+                s_end = point.get('section_end', 0)
+                
+                measured, x_start_px, x_end_px = \
+                    self.measure_multi_section_length(
+                        sections, s_start, s_end, x_calibration
+                    )
+                section_info = f"Bölüm {s_start + 1} → {s_end + 1} arası uzunluk"
+            
+            elif point_type == 'length' and method == 'total_length':
+                measured, x_start_px, x_end_px = \
+                    self.measure_total_length(profile, x_calibration)
+                section_info = "Toplam parça uzunluğu"
+            
+            # ─── Değerlendirme ───
             if measured is not None:
                 status, deviation = self.evaluate_pass_fail(
                     measured, nominal, lower_tol, upper_tol
@@ -271,10 +406,12 @@ class FixedMeasurementEngine:
                 min_limit = nominal + lower_tol
                 max_limit = nominal + upper_tol
                 measured = 0.0
+                section_info += " — ölçüm alınamadı"
             
             result = MeasurementResult(
                 code=code,
                 measurement_type=point_type,
+                method=method,
                 nominal_mm=nominal,
                 measured_mm=measured,
                 deviation_mm=deviation,
@@ -284,7 +421,12 @@ class FixedMeasurementEngine:
                 max_limit_mm=max_limit,
                 status=status,
                 description=description,
-                unit=unit
+                unit=unit,
+                section_info=section_info,
+                x_pixel_start=x_start_px,
+                x_pixel_end=x_end_px,
+                top_y=top_y,
+                bottom_y=bottom_y,
             )
             
             results.append(result)
@@ -294,12 +436,6 @@ class FixedMeasurementEngine:
     def generate_report_data(self, results: List[MeasurementResult]) -> Dict:
         """
         Ölçüm sonuçlarından rapor verisi oluşturur.
-        
-        Args:
-            results: Ölçüm sonuçları listesi
-            
-        Returns:
-            Rapor verisi (tablo formatında)
         """
         report = {
             'template_id': self.template.get('template_id', 'UNKNOWN'),
@@ -322,6 +458,7 @@ class FixedMeasurementEngine:
             report['measurements'].append({
                 'code': result.code,
                 'type': result.measurement_type,
+                'method': result.method,
                 'description': result.description,
                 'nominal': f"{result.nominal_mm:.4f}",
                 'measured': f"{result.measured_mm:.4f}",
@@ -331,19 +468,19 @@ class FixedMeasurementEngine:
                 'min_limit': f"{result.min_limit_mm:.4f}",
                 'max_limit': f"{result.max_limit_mm:.4f}",
                 'status': result.status,
-                'unit': result.unit
+                'unit': result.unit,
+                'section_info': result.section_info,
+                'x_pixel_start': result.x_pixel_start,
+                'x_pixel_end': result.x_pixel_end,
+                'top_y': result.top_y,
+                'bottom_y': result.bottom_y,
             })
         
         return report
 
 
 def load_default_template() -> FixedMeasurementEngine:
-    """
-    Varsayılan şablonu yükler.
-    
-    Returns:
-        FixedMeasurementEngine instance
-    """
+    """Varsayılan şablonu yükler."""
     template_path = Path(__file__).parent / 'fixed_measurement_template.json'
     engine = FixedMeasurementEngine(str(template_path))
     return engine
@@ -353,6 +490,10 @@ def load_default_template() -> FixedMeasurementEngine:
 if __name__ == "__main__":
     engine = load_default_template()
     print(f"Şablon yüklendi: {engine.template.get('template_id')}")
+    print(f"Versiyon: {engine.template.get('version')}")
     print(f"Ölçüm noktası sayısı: {len(engine.measurement_points)}")
     for point in engine.measurement_points:
-        print(f"  {point['code']}: {point['description']} ({point['nominal_mm']} mm)")
+        method = point.get('method', '?')
+        section = point.get('section_index', '-')
+        print(f"  {point['code']}: {point['description']} "
+              f"(method={method}, section={section}, nominal={point['nominal_mm']} mm)")

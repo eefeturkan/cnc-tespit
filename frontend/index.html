@@ -470,24 +470,24 @@
                 </div>
 
                 <!-- Fixed Measurement Button -->
-                <div class="fixed-measurement-panel" id="fixed-measurement-panel" style="margin: 10px 0; padding: 15px; background: #f8fafc; border-radius: 8px; border: 2px solid #3b82f6;">
+                <div class="fixed-measurement-panel" id="fixed-measurement-panel" style="margin: 10px 0; padding: 15px; background: var(--bg-surface, #111820); border-radius: 8px; border: 1px solid var(--border-subtle, #1e293b);">
                     <div style="display: flex; align-items: center; justify-content: space-between;">
                         <div>
-                            <span class="param-panel-title" style="color: #1e40af; font-size: 16px;">📐 Sabit Ölçüm Noktaları</span>
+                            <span class="param-panel-title" style="color: var(--accent, #3b82f6); font-size: 16px;">📐 SABİT ÖLÇÜM NOKTALARI</span>
                             <span style="color: #64748b; font-size: 12px; margin-left: 10px;">Teknik çizimdeki 03, 04, 05, 06, 08, 17, 18, 21, 22, 24 noktaları</span>
                         </div>
                         <button class="btn-primary" id="btn-fixed-measure"
-                            style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); border: none; padding: 10px 24px; font-size: 14px; font-weight: 600;">
+                            style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); border: none; padding: 10px 24px; font-size: 14px; font-weight: 600; color: #fff; border-radius: 6px; cursor: pointer;">
                             🔍 Sabit Noktalarda Ölç
                         </button>
                     </div>
                 </div>
 
                 <!-- Fixed Measurement Results Table -->
-                <div class="measurement-table-panel hidden" id="fixed-measurement-results-panel" style="border: 2px solid #3b82f6; background: #eff6ff;">
-                    <div class="measurement-table-header" style="background: #dbeafe;">
+                <div class="measurement-table-panel hidden" id="fixed-measurement-results-panel" style="border: 1px solid var(--accent, #3b82f6); background: var(--bg-surface, #111820);">
+                    <div class="measurement-table-header" style="background: rgba(59, 130, 246, 0.1); border-bottom: 1px solid rgba(59, 130, 246, 0.2);">
                         <div>
-                            <span class="param-panel-title" style="color: #1e40af;">📊 Sabit Ölçüm Sonuçları</span>
+                            <span class="param-panel-title" style="color: var(--accent, #3b82f6);">📊 SABİT ÖLÇÜM SONUÇLARI</span>
                             <span class="measure-summary" id="fixed-measure-summary"></span>
                         </div>
                         <div class="download-buttons">
@@ -501,7 +501,7 @@
                     </div>
                     <div class="measurement-table-wrapper">
                         <table class="measurement-table" id="fixed-measurement-table" style="font-size: 13px;">
-                            <thead style="background: #bfdbfe;">
+                            <thead>
                                 <tr>
                                     <th style="width: 60px;">Kod</th>
                                     <th style="width: 80px;">Tip</th>
