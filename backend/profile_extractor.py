@@ -277,21 +277,39 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
                 cv2.arrowedLine(overlay, (mid_x, int((ity + iby)/2)), (mid_x, ity), (0, 0, 255), 2, tipLength=0.05)
                 cv2.arrowedLine(overlay, (mid_x, int((ity + iby)/2)), (mid_x, iby), (0, 0, 255), 2, tipLength=0.05)
 
-            # Çap etiketi
+            # Çap ve Uzunluk etiketlerini merkeze yaz (Mockup'taki gibi sarı ve ortalı)
             diameter_mm = sec.get("diameter_mm", 0)
-            label = f"D{diameter_mm:.2f}"
-            label_x = mid_x + 8
-            label_y = int(top_y - 10) if top_y is not None else int(sec.get("center_y", 0))
-            cv2.putText(overlay, label, (label_x, label_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1, cv2.LINE_AA)
-
-            # Uzunluk etiketi (alt kısmına yaz)
             length_mm = sec.get("length_mm", 0)
-            if length_mm > 0:
-                length_label = f"L{length_mm:.2f}"
-                ly = int(bot_y + 20) if bot_y is not None else 0
-                cv2.putText(overlay, length_label, (mid_x - 15, ly),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1, cv2.LINE_AA)
+            
+            if top_y is not None and bot_y is not None:
+                mid_y = (ity + iby) // 2
+                
+                # Etiket metinleri
+                d_label = f"cap: {diameter_mm:.2f}"
+                l_label = f"uzunluk: {length_mm:.2f}"
+                
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                thickness = 2
+                color = (0, 255, 255)  # Sarı
+                
+                # Çap etiketini ortala
+                d_size, _ = cv2.getTextSize(d_label, font, font_scale, thickness)
+                d_x = mid_x - d_size[0] // 2
+                d_y = mid_y - 5  # Merkezin biraz üstü
+                
+                # Uzunluk etiketini ortala
+                l_size, _ = cv2.getTextSize(l_label, font, font_scale, thickness)
+                l_x = mid_x - l_size[0] // 2
+                l_y = mid_y + 15 # Merkezin biraz altı
+                
+                # Arka plan için hafif gölge (okunabilirlik için)
+                cv2.putText(overlay, d_label, (d_x + 1, d_y + 1), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+                cv2.putText(overlay, l_label, (l_x + 1, l_y + 1), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+                
+                # Ana metinler
+                cv2.putText(overlay, d_label, (d_x, d_y), font, font_scale, color, thickness, cv2.LINE_AA)
+                cv2.putText(overlay, l_label, (l_x, l_y), font, font_scale, color, thickness, cv2.LINE_AA)
 
             # Bölüm ayraç çizgileri (beyaz dikey kesikli)
             for draw_x in [sx, ex]:
@@ -318,20 +336,27 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
                 bot_y = f.get("bottom_y")
                 if top_y is None or bot_y is None:
                     continue
+                # Çap etiketi (sarı ve ortalı)
+                d_label = f"cap: {f.get('measured_mm', 0):.2f}"
+                d_size, _ = cv2.getTextSize(d_label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
                 cv2.putText(
-                    overlay, label,
-                    (mid_x + 8, max(0, int(top_y) - 14)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                    (0, 220, 255), 2, cv2.LINE_AA
+                    overlay, d_label,
+                    (mid_x - d_size[0] // 2, max(0, int(top_y) - 15)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                    (0, 255, 255), 2, cv2.LINE_AA
                 )
             else:
                 # Uzunluk için segment sınırlarını hafif vurgula + etiket
                 y = overlay.shape[0] - 12
+                # Uzunluk etiketi (açık yeşil/sarı ve ortalı)
+                l_label = f"uzunluk: {f.get('measured_mm', 0):.2f}"
+                l_size, _ = cv2.getTextSize(l_label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                y = overlay.shape[0] - 15
                 cv2.putText(
-                    overlay, label,
-                    (mid_x - 14, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                    (180, 255, 180), 2, cv2.LINE_AA
+                    overlay, l_label,
+                    (mid_x - l_size[0] // 2, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                    (0, 255, 255), 2, cv2.LINE_AA
                 )
 
     return overlay
