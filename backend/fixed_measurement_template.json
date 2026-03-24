@@ -23,9 +23,9 @@
       "x_abs": 178,
       "sample_width_px": 3,
       "nominal_mm": 12.9,
-      "lower_tol_mm": -0.05,
-      "upper_tol_mm": 0.05,
-      "description": "Ölçüm 2 (Sol uçtan x=178)",
+      "lower_tol_mm": -0.1,
+      "upper_tol_mm": 0.1,
+      "description": "Ölçüm (Sol uçtan x=178)",
       "unit": "mm"
     },
     {
@@ -34,7 +34,7 @@
       "method": "fixed_x",
       "x_abs": 280,
       "sample_width_px": 3,
-      "nominal_mm": 16.0,
+      "nominal_mm": 22.915,
       "lower_tol_mm": -0.013,
       "upper_tol_mm": 0.02,
       "description": "Ölçüm (Sol uçtan x=280)",
@@ -46,10 +46,10 @@
       "method": "fixed_x",
       "x_abs": 420,
       "sample_width_px": 3,
-      "nominal_mm": 22.915,
+      "nominal_mm": 25.07,
       "lower_tol_mm": -0.013,
       "upper_tol_mm": 0.02,
-      "description": "Ölçüm 4 (Sol uçtan x=420)",
+      "description": "Ölçüm (Sol uçtan x=420)",
       "unit": "mm"
     },
     {

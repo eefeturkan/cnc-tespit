@@ -5,6 +5,8 @@ Parçanın silüetinden profil verisi (üst/alt kenar, çap profili) çıkarır.
 
 import cv2
 import numpy as np
+import scipy.ndimage as ndimage
+import scipy.signal as signal
 from typing import Dict, List, Tuple, Optional
 
 
@@ -37,10 +39,114 @@ def _subpixel_edge_1d(gray_col: np.ndarray, y: int, search_window: int = 3) -> f
     if denom == 0:
         return float(best_y)
         
-    d = 0.5 * (g_minus - g_plus) / denom
-    d = max(-1.0, min(1.0, d))
+    delta = 0.5 * (g_minus - g_plus) / denom
+    delta = max(-1.0, min(1.0, delta))
     
-    return float(best_y) + d
+    return float(best_y) + delta
+
+
+def _remove_outliers(edge_array: List[Optional[float]], window: int = 11, threshold: float = 2.0) -> List[Optional[float]]:
+    """
+    Komşu piksellere göre çok sapan (outlier) noktaları temizler.
+    Median filtreden farkı: Sadece sapan noktaları değiştirir, diğerlerini korur.
+    """
+    if not edge_array or len(edge_array) < window:
+        return edge_array
+        
+    result = list(edge_array)
+    arr = np.array([x if x is not None else np.nan for x in edge_array], dtype=float)
+    
+    for i in range(len(arr)):
+        if np.isnan(arr[i]):
+            continue
+            
+        # Pencere sınırlarını belirle
+        start = max(0, i - window // 2)
+        end = min(len(arr), i + window // 2 + 1)
+        
+        # Komşuların medyanını bul
+        neighbor_slice = arr[start:end]
+        valid_neighbors = neighbor_slice[~np.isnan(neighbor_slice)]
+        
+        if len(valid_neighbors) < 3:
+            continue
+            
+        med = np.median(valid_neighbors)
+        
+        # Eğer noktada büyük sapma varsa medyan ile değiştir (outlier temizliği)
+        if abs(arr[i] - med) > threshold:
+            result[i] = float(med)
+            
+    return result
+
+
+def _savitzky_golay_smooth(edge_array: List[Optional[float]], window: int = 15, polyorder: int = 2) -> List[Optional[float]]:
+    """
+    Savitzky-Golay filtresi ile kenar profilini yumuşatır.
+    Fiziksel geometriyi (köşeleri) Gaussian'dan daha iyi korur.
+    """
+    if not edge_array or len(edge_array) < window:
+        return edge_array
+        
+    mask = [x is not None for x in edge_array]
+    vals = np.array([x if x is not None else 0 for x in edge_array], dtype=float)
+    
+    # None değerleri civarındaki verilerle doldur (polinom fit için sürekli dizi lazım)
+    # Basit bir interpolasyon (pad)
+    for i in range(len(vals)):
+        if not mask[i]:
+            # En yakın geçerli değeri bul
+            left = i - 1
+            while left >= 0 and not mask[left]: left -= 1
+            right = i + 1
+            while right < len(vals) and not mask[right]: right += 1
+            
+            if left >= 0 and right < len(vals):
+                vals[i] = (vals[left] + vals[right]) / 2.0
+            elif left >= 0:
+                vals[i] = vals[left]
+            elif right < len(vals):
+                vals[i] = vals[right]
+
+    # Savitzky-Golay (hassas geometrik yumuşatma)
+    window_choice = int(window)
+    if window_choice % 2 == 0: window_choice += 1
+    if window_choice >= len(vals): window_choice = len(vals) if len(vals) % 2 == 1 else len(vals) - 1
+    
+    if window_choice < 5: return edge_array
+        
+    smoothed = signal.savgol_filter(vals, window_choice, polyorder)
+    
+    result = []
+    for i, exists in enumerate(mask):
+        result.append(float(smoothed[i]) if exists else None)
+        
+    return result
+
+
+def edge_stabilize(edge_array: List[Optional[float]]) -> List[Optional[float]]:
+    """
+    Stabilizasyon katmanı: Median + Outlier Temizliği + Savitzky-Golay
+    Ani sıçramaları (jitter) ve gürültüyü ciddi oranda azaltır.
+    """
+    if not edge_array or len(edge_array) < 10:
+        return edge_array
+        
+    # 1. Ham median filtre (kaba gürültü)
+    mask = [x is not None for x in edge_array]
+    clean_vals = np.array([x if x is not None else 0 for x in edge_array], dtype=float)
+    med_smoothed = ndimage.median_filter(clean_vals, size=7)
+    
+    # None'ları geri koy
+    stage1 = [float(med_smoothed[i]) if mask[i] else None for i in range(len(edge_array))]
+    
+    # 2. Outlier Temizliği (medyandan aşırı sapanları buda)
+    stage2 = _remove_outliers(stage1, window=11, threshold=1.5)
+    
+    # 3. Savitzky-Golay (hassas geometrik yumuşatma)
+    stage3 = _savitzky_golay_smooth(stage2, window=15, polyorder=2)
+    
+    return stage3
 
 
 def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
@@ -68,8 +174,8 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
         }
     """
     params = params or {}
-    blur_ksize = params.get("blur_ksize", 5)
-    morph_ksize = params.get("morph_ksize", 5)
+    blur_ksize = params.get("blur_ksize", 7)  # Gürültüye karşı varsayılan blur'u artırdık
+    morph_ksize = params.get("morph_ksize", 7) # Sınırların daha iyi birleşmesi için artırıldı
     min_contour_area = params.get("min_contour_area", 5000)
 
     # 1. Gri tonlama ve parlaklık analizi
@@ -174,12 +280,17 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
     x_end = int(cols_with_data[-1]) + 1
     y_start = int(rows_with_data[0])
     y_end = int(rows_with_data[-1]) + 1
-    bbox = (x_start, y_start, x_end - x_start, y_end - y_start)
+    bbox = (int(x_start), int(y_start), int(x_end - x_start), int(y_end - y_start))
 
-    top_edge = []
-    bottom_edge = []
-    diameter_px = []
-    center_y_list = []
+    # ROI Band Sınırlaması (Kullanıcı parametresi)
+    # Sadece fiziksel parçanın olması gereken y aralığında kenar ara
+    roi_y_min = params.get("roi_y_min", 0)
+    roi_y_max = params.get("roi_y_max", gray.shape[0])
+
+    top_edge: List[Optional[float]] = []
+    bottom_edge: List[Optional[float]] = []
+    diameter_px: List[float] = []
+    center_y_list: List[Optional[float]] = []
 
     for x in range(x_start, x_end):
         # Kritik: Çapı kalibrasyonla aynı mantıkla ölç.
@@ -191,7 +302,8 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
         else:
             col = binary[:, x]
 
-        white_pixels = np.where(col > 0)[0]
+        # ROI kısıtı uygula
+        white_pixels = np.where((col > 0) & (np.arange(len(col)) >= roi_y_min) & (np.arange(len(col)) <= roi_y_max))[0]
 
         # Kaynak kolonda veri yoksa birleşik kontur maskesine fallback.
         if len(white_pixels) == 0:
@@ -215,11 +327,27 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
             diameter_px.append(bottom_sub - top_sub)
             center_y_list.append((top_sub + bottom_sub) / 2.0)
 
+    # 5. Profil Stabilizasyonu (Edge Stabilize Layer)
+    # Gürültü ve titremeyi (jitter) önlemek için gelişmiş filtreleme uygulanır
+    top_edge_smoothed = edge_stabilize(top_edge)
+    bottom_edge_smoothed = edge_stabilize(bottom_edge)
+    
+    # Çap ve merkezi pürüzsüzleştirilmiş kenarlara göre yeniden hesapla
+    diameter_px_smoothed = []
+    center_y_smoothed = []
+    for t, b in zip(top_edge_smoothed, bottom_edge_smoothed):
+        if t is not None and b is not None:
+            diameter_px_smoothed.append(b - t)
+            center_y_smoothed.append((t + b) / 2.0)
+        else:
+            diameter_px_smoothed.append(0)
+            center_y_smoothed.append(None)
+
     return {
-        "top_edge": top_edge,
-        "bottom_edge": bottom_edge,
-        "diameter_px": diameter_px,
-        "center_y": center_y_list,
+        "top_edge": top_edge_smoothed,
+        "bottom_edge": bottom_edge_smoothed,
+        "diameter_px": diameter_px_smoothed,
+        "center_y": center_y_smoothed,
         "x_start": x_start,
         "x_end": x_end,
         "contour": main_contour,
@@ -273,7 +401,7 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
     # Bölüm ayraç çizgileri (kesikli gri dikey çizgiler — sadece sınır)
     # NOT: Çap ölçüm çizgileri artık burada ÇİZİLMEZ. 
     # Sabit X koordinatlarından çizilen ölçümler app.py tarafından çizilir.
-    if sections:
+    if sections is not None:
         for sec in sections:
             sx = sec["x_start_abs"]
             ex = sec["x_end_abs"]
@@ -288,12 +416,12 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
                 continue
             fid = str(f.get("id"))
             ftype = f.get("type")
-            xs = f.get("x_start_abs")
-            xe = f.get("x_end_abs")
-            if xs is None or xe is None:
+            xs_val = f.get("x_start_abs")
+            xe_val = f.get("x_end_abs")
+            if xs_val is None or xe_val is None:
                 continue
 
-            mid_x = int(f.get("mid_x") or ((int(xs) + int(xe)) // 2))
+            mid_x = int(f.get("mid_x") or ((int(xs_val) + int(xe_val)) // 2))
             label = f"{'D' if ftype == 'diameter' else 'L'}{fid.zfill(2)}"
 
             if ftype == "diameter":
@@ -306,7 +434,7 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
                 d_size, _ = cv2.getTextSize(d_label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
                 cv2.putText(
                     overlay, d_label,
-                    (mid_x - d_size[0] // 2, max(0, int(top_y) - 15)),
+                    (mid_x - d_size[0] // 2, max(0, int(float(top_y)) - 15)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     (0, 255, 255), 2, cv2.LINE_AA
                 )
