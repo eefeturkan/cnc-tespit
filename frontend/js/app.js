@@ -55,6 +55,9 @@ const state = {
     // ROI
     roiActive: false,
     roi: null, // {x, y, width, height}
+    // Noktasal Ölçüm Modu
+    pointMode: false,
+    measurePoints: [],         // Mutlak x koordinatları
 };
 
 const DOM = {};
@@ -111,6 +114,7 @@ function cacheDom() {
     DOM.btnDownloadImage = document.getElementById('btn-download-image');
     DOM.btnDownloadPdf = document.getElementById('btn-download-pdf');
     DOM.btnDownloadExcel = document.getElementById('btn-download-excel');
+    DOM.btnFixedMeasure = document.getElementById('btn-fixed-measure');
     // Measurement mode
     DOM.btnMeasureModeAuto = document.getElementById('btn-measure-mode-auto');
     DOM.btnMeasureModeGolden = document.getElementById('btn-measure-mode-golden');
@@ -166,6 +170,26 @@ function cacheDom() {
     DOM.btnRoiClear = document.getElementById('btn-roi-clear');
     DOM.roiBadge = document.getElementById('roi-badge');
     DOM.roiInfo = document.getElementById('roi-info');
+    // Point Measurement
+    DOM.btnPointModeOff = document.getElementById('btn-point-mode-off');
+    DOM.btnPointModeOn = document.getElementById('btn-point-mode-on');
+    DOM.pointControls = document.getElementById('point-controls');
+    DOM.pointCount = document.getElementById('point-count');
+    DOM.btnPointClear = document.getElementById('btn-point-clear');
+    DOM.btnMeasurePoints = document.getElementById('btn-measure-points');
+    DOM.originalPointCanvas = document.getElementById('original-point-canvas');
+    DOM.processedPointCanvas = document.getElementById('processed-point-canvas');
+    // Fine-Tuning (Premium)
+    DOM.fineTuneContainer = document.getElementById('fine-tune-panel-container');
+    DOM.tunePointCode = document.getElementById('tune-point-code');
+    DOM.tunePointDesc = document.getElementById('tune-point-desc');
+    DOM.tuneXInput = document.getElementById('tune-x-input');
+    DOM.tuneNominalInput = document.getElementById('tune-nominal-input');
+    DOM.tuneLowerTolInput = document.getElementById('tune-lower-tol-input');
+    DOM.tuneUpperTolInput = document.getElementById('tune-upper-tol-input');
+    DOM.btnTuneSave = document.getElementById('btn-tune-save');
+    DOM.btnTuneClose = document.getElementById('btn-tune-close');
+    DOM.tuneGroupX = document.getElementById('tune-group-x');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -215,6 +239,11 @@ const API = {
     async measureManualBoundaries(data) {
         const r = await fetch('/api/measure/manual-boundaries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
         if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Manuel ölçüm başarısız'); }
+        return r.json();
+    },
+    async measurePoints(data) {
+        const r = await fetch('/api/measure/points', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Noktasal ölçüm başarısız'); }
         return r.json();
     },
     async download(url, data, filename) {
@@ -621,6 +650,13 @@ async function handleAutoEdgeClick(e) {
         return;
     }
     
+    // Noktasal Ölçüm Tıklama İşlemi
+    const isMeasureTabActive = getActiveTabId() === 'tab-measurement';
+    if (state.pointMode && isMeasureTabActive) {
+        handlePointClick(clickX);
+        return;
+    }
+    
     // FIX: Kalibrasyon sekmesi dışındayken X kalibrasyon state'ini sıfırla
     if (!isCalTabActive && state.xCalState !== 'idle') {
         state.xCalState = 'idle';
@@ -756,6 +792,13 @@ function resetCalibrationForNewImage() {
     DOM.calXStep1.classList.add('active');
     DOM.calXHintText.textContent = 'Bilinen uzunluktaki bir bölümün sol kenarına tıklayın (1. nokta).';
     setXCalActiveStyle(false);
+    
+    // Noktasal ölçüm reset
+    state.measurePoints = [];
+    state.pointMode = false;
+    updatePointModeUI();
+    updatePointCount();
+    clearPointCanvas();
 }
 
 function setCalibrationResult(ppmm) {
@@ -1869,6 +1912,12 @@ async function init() {
     setupXCalSliders();
     setupBoundaryMode();
     setupROI();
+    setupPointMeasurement();
+    setupFineTuneEventListeners();
+    setupFixedMeasurement();
+    
+    // Şablon bilgilerini yükle
+    loadTemplateInfo();
 
     // Space tuşu dinleyicisi (zoom/pan modu için)
     document.addEventListener('keydown', (e) => {
@@ -1894,6 +1943,8 @@ async function init() {
             updateXSliderRange();
             // Boundary overlay yenile
             if (state.boundaryMode) drawBoundaryOverlay();
+            // Point overlay yenile
+            if (state.pointMode) drawPointMarkers();
         });
     });
     // Pencere resize'ında da yeniden çiz (sadece kalibrasyon sekmesindeyse)
@@ -1902,6 +1953,7 @@ async function init() {
         const isCalTabActive = calTab && calTab.classList.contains('active');
         if (state.xCalPoints.x1 !== null && isCalTabActive) drawXCalMarkers();
         if (state.boundaryMode) drawBoundaryOverlay();
+        if (state.pointMode) drawPointMarkers();
     });
 
     try {
@@ -2030,6 +2082,14 @@ function displayFixedMeasurementResults(data) {
             </td>
         `;
         
+        row.dataset.code = m.code;
+        row.addEventListener('click', () => {
+            // Aktif satırı işaretle
+            tbody.querySelectorAll('tr').forEach(r => r.classList.remove('active'));
+            row.classList.add('active');
+            openFineTunePanel(m);
+        });
+        
         tbody.appendChild(row);
     });
     
@@ -2068,15 +2128,272 @@ async function loadTemplateInfo() {
     }
 }
 
-// Sabit ölçüm butonu event listener'ı
-document.addEventListener('DOMContentLoaded', () => {
-    const btnFixedMeasure = document.getElementById('btn-fixed-measure');
-    if (btnFixedMeasure) {
-        btnFixedMeasure.addEventListener('click', performFixedMeasurement);
+/**
+ * Sabit ölçüm butonunun event listener'larını kurar.
+ */
+function setupFixedMeasurement() {
+    if (DOM.btnFixedMeasure) {
+        DOM.btnFixedMeasure.addEventListener('click', () => {
+            if (DOM.fineTuneContainer) DOM.fineTuneContainer.classList.add('hidden');
+            performFixedMeasurement();
+        });
+    }
+}
+
+// Sabit ölçüm butonu event listener'ı (Eski listener kaldırıldı, init içindeki setupFixedMeasurement kullanılıyor)
+// Uygulama başlatma
+document.addEventListener('DOMContentLoaded', init);
+
+// ─── Sabit Ölçüm İnce Ayar (Fine-Tuning) ───────────────────────────────────
+
+/**
+ * İnce ayar panelindeki input değerlerini butonlarla değiştirir. (Global helper)
+ */
+window.adjustValue = function(inputId, delta) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    
+    let val = parseFloat(input.value) || 0;
+    let newVal = val + delta;
+    
+    // Hassasiyet düzeltme
+    if (inputId.includes('nominal') || inputId.includes('tol')) {
+        newVal = Math.round(newVal * 1000) / 1000;
+        input.value = newVal.toFixed(3);
+    } else {
+        input.value = Math.round(newVal);
     }
     
-    // Şablon bilgilerini yükle
-    loadTemplateInfo();
-});
+    // Change event'i tetikle
+    input.dispatchEvent(new Event('change'));
+};
 
-document.addEventListener('DOMContentLoaded', init);
+let selectedPoint = null;
+
+function openFineTunePanel(point) {
+    selectedPoint = point;
+    DOM.tunePointCode.textContent = point.code;
+    
+    // Yeni konumdaki description güncelleme
+    const descEl = document.getElementById('tune-point-desc');
+    if (descEl) descEl.textContent = point.description || '';
+    
+    // Sadece diameter tipped olanlar için X-Offset göster
+    const isDiameter = point.type === 'diameter' || (point.method === 'fixed_x');
+    DOM.tuneGroupX.style.display = isDiameter ? 'flex' : 'none';
+    
+    // Ham X değerini backend'den gelen m.x_abs'den al
+    let currentX = 0;
+    if (point.x_abs !== undefined && point.x_abs !== null) {
+        currentX = point.x_abs;
+    } else {
+        // Fallback: description'dan parse et
+        const xMatch = point.description.match(/x=(\d+)/);
+        if (xMatch) currentX = parseInt(xMatch[1]);
+    }
+    
+    DOM.tuneXInput.value = currentX;
+    
+    // Nominal ve Toleransları doldur
+    DOM.tuneNominalInput.value = point.nominal !== undefined ? point.nominal : (point.nominal_mm ? point.nominal_mm.toFixed(3) : "0.000");
+    DOM.tuneLowerTolInput.value = (point.raw_lower_tol !== undefined) ? point.raw_lower_tol.toFixed(3) : "0.000";
+    DOM.tuneUpperTolInput.value = (point.raw_upper_tol !== undefined) ? point.raw_upper_tol.toFixed(3) : "0.000";
+    
+    // Paneli göster
+    DOM.fineTuneContainer.classList.remove('hidden');
+    DOM.fineTuneContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    
+    // Aktif satırı işaretle
+    document.querySelectorAll('.measurement-table tbody tr').forEach(tr => {
+        tr.classList.remove('active');
+        if (tr.dataset.code === point.code) {
+            tr.classList.add('active');
+        }
+    });
+
+    console.log(`[Premium UI] İnce ayar paneli açıldı: ${point.code}`);
+}
+
+function setupFineTuneEventListeners() {
+    // Close butonu
+    DOM.btnTuneClose?.addEventListener('click', () => {
+        DOM.fineTuneContainer.classList.add('hidden');
+        document.querySelectorAll('#fixed-measurement-tbody tr').forEach(r => r.classList.remove('active'));
+    });
+    
+    // Save butonu
+    DOM.btnTuneSave?.addEventListener('click', async () => {
+        if (!selectedPoint) return;
+        
+        const newX = parseInt(DOM.tuneXInput.value);
+        const newNominal = parseFloat(DOM.tuneNominalInput.value);
+        const newLowerTol = parseFloat(DOM.tuneLowerTolInput.value);
+        const newUpperTol = parseFloat(DOM.tuneUpperTolInput.value);
+        
+        showLoading(true);
+        try {
+            await updateTemplatePoint(selectedPoint.code, newX, newNominal, newLowerTol, newUpperTol);
+            showToast(`${selectedPoint.code} şablona kaydedildi`, 'success');
+            // Yeniden ölçüm yap
+            await performFixedMeasurement();
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            showLoading(false);
+        }
+    });
+}
+
+async function updateTemplatePoint(code, x, nominal, lowerTol, upperTol) {
+    const response = await fetch('/api/template/update-point', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            point_code: code,
+            new_x_abs: x,
+            new_nominal_mm: nominal,
+            new_lower_tol: lowerTol,
+            new_upper_tol: upperTol
+        }),
+    });
+    
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Şablon güncellenemedi');
+    }
+    return response.json();
+}
+
+// ─── Noktasal Ölçüm (Point Measurement) ───────────────────────────────────
+
+function setupPointMeasurement() {
+    DOM.btnPointModeOn.addEventListener('click', () => {
+        state.pointMode = true;
+        updatePointModeUI();
+        showToast('Noktasal Ölçüm Modu: Açık', 'info');
+    });
+
+    DOM.btnPointModeOff.addEventListener('click', () => {
+        state.pointMode = false;
+        updatePointModeUI();
+        showToast('Noktasal Ölçüm Modu: Kapalı', 'info');
+    });
+
+    DOM.btnPointClear.addEventListener('click', () => {
+        state.measurePoints = [];
+        updatePointCount();
+        drawPointMarkers();
+        showToast('Tüm noktalar temizlendi', 'info');
+    });
+
+    DOM.btnMeasurePoints.addEventListener('click', async () => {
+        if (!state.imageId) { showToast('Önce fotoğraf yükleyin', 'warning'); return; }
+        if (!state.calibrated) { showToast('Önce kalibrasyon yapın', 'warning'); return; }
+        if (state.measurePoints.length === 0) { showToast('Lütfen ölçülecek noktaları seçin', 'warning'); return; }
+
+        const activeId = state.processedImageId || state.imageId;
+        showLoading(true);
+        try {
+            const r = await API.measurePoints({
+                image_id: activeId,
+                points: state.measurePoints,
+                ...state.measureParams
+            });
+
+            state.lastMeasurementTable = r.measurement_table;
+            state.lastSummary = r.summary;
+            
+            DOM.processedImage.src = r.overlay_image;
+            DOM.activeAlgoTitle.innerHTML = `Noktasal Ölçüm <span class="algo-badge">${r.summary.total_points} nokta</span>`;
+            showImagePanels();
+            renderMeasurementTable(r.measurement_table, r.summary);
+            
+            showToast(`Noktasal ölçüm tamamlandı: ${r.summary.total_points} nokta`, 'success');
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            showLoading(false);
+        }
+    });
+}
+
+function updatePointModeUI() {
+    const isOn = state.pointMode;
+    DOM.btnPointModeOn.style.background = isOn ? 'var(--accent)' : '#1e293b';
+    DOM.btnPointModeOn.style.borderColor = isOn ? 'var(--accent)' : '#334155';
+    DOM.btnPointModeOn.style.color = isOn ? 'white' : '#e2e8f0';
+
+    DOM.btnPointModeOff.style.background = isOn ? '#1e293b' : 'var(--accent)';
+    DOM.btnPointModeOff.style.borderColor = isOn ? '#334155' : 'var(--accent)';
+    DOM.btnPointModeOff.style.color = isOn ? '#e2e8f0' : 'white';
+
+    if (isOn) {
+        DOM.pointControls.classList.remove('hidden');
+        drawPointMarkers();
+    } else {
+        DOM.pointControls.classList.add('hidden');
+        clearPointCanvas();
+    }
+}
+
+function handlePointClick(clickX) {
+    const idx = state.measurePoints.indexOf(clickX);
+    if (idx > -1) {
+        // Zaten varsa sil (Toggle behavior)
+        state.measurePoints.splice(idx, 1);
+    } else {
+        // Yeni nokta ekle
+        state.measurePoints.push(clickX);
+        state.measurePoints.sort((a, b) => a - b);
+    }
+    updatePointCount();
+    drawPointMarkers();
+}
+
+function updatePointCount() {
+    DOM.pointCount.textContent = state.measurePoints.length;
+    DOM.btnMeasurePoints.disabled = state.measurePoints.length === 0;
+}
+
+function clearPointCanvas() {
+    [DOM.originalPointCanvas, DOM.processedPointCanvas].forEach(canvas => {
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    });
+}
+
+function drawPointMarkers() {
+    const pairs = [
+        { canvas: DOM.originalPointCanvas, img: DOM.originalImage },
+        { canvas: DOM.processedPointCanvas, img: DOM.processedImage },
+    ];
+
+    pairs.forEach(({ canvas, img }) => {
+        if (!canvas || !img || !img.naturalWidth) return;
+        if (!syncCanvasSize(canvas, img)) return;
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const scaleX = canvas.width / img.naturalWidth;
+
+        state.measurePoints.forEach((px, i) => {
+            const dx = px * scaleX;
+            
+            ctx.save();
+            ctx.strokeStyle = '#3b82f6'; // Mavi
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(dx, 0);
+            ctx.lineTo(dx, canvas.height);
+            ctx.stroke();
+
+            // Marker başlığı
+            ctx.fillStyle = '#3b82f6';
+            ctx.font = 'bold 10px JetBrains Mono, monospace';
+            ctx.fillText(`P${i+1}`, dx + 4, 12);
+            ctx.restore();
+        });
+    });
+}
