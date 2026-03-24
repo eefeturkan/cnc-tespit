@@ -1180,7 +1180,9 @@ async def measure_fixed_points(request: FixedMeasurementRequest):
         report = engine.generate_report_data(results)
         
         # 6. Overlay görüntüsü oluştur
-        overlay = draw_profile_overlay(img, profile, y_calibration, sections)
+        # Sabit ölçüm modunda tam ölçümdeki bölüm çizgileri görünmemeli;
+        # sadece profil ve aşağıda çizilen sabit ölçü işaretleri gösterilir.
+        overlay = draw_profile_overlay(img, profile, y_calibration)
         
         # Ölçüm noktalarını overlay üzerine çiz
         for m in report['measurements']:
