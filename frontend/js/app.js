@@ -1984,7 +1984,6 @@ async function performFixedMeasurement() {
     
     try {
         const imageIdToUse = state.processedImageId || state.imageId;
-        
         const response = await fetch('/api/measure/fixed', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2065,7 +2064,10 @@ function displayFixedMeasurementResults(data) {
         row.innerHTML = `
             <td style="font-weight: bold; text-align: center; color: #e2e8f0;">${m.code}</td>
             <td style="text-align: center; color: #94a3b8;">${typeLabel}</td>
-            <td style="font-size: 12px; color: #94a3b8;">${m.description}</td>
+            <td style="font-size: 12px; color: #94a3b8;" title="${m.section_info || ''}">
+                <div>${m.description}</div>
+                ${m.section_info ? `<div style="font-size: 11px; color: #64748b; margin-top: 4px;">${m.section_info}</div>` : ''}
+            </td>
             <td style="text-align: right; font-family: 'JetBrains Mono', monospace; color: #cbd5e1;">${m.nominal}</td>
             <td style="text-align: right; font-family: 'JetBrains Mono', monospace; font-weight: bold; color: #e2e8f0;">${m.measured}</td>
             <td style="text-align: right; font-family: 'JetBrains Mono', monospace; color: ${deviationColor};">

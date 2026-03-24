@@ -45,6 +45,105 @@ def _subpixel_edge_1d(gray_col: np.ndarray, y: int, search_window: int = 3) -> f
     return float(best_y) + delta
 
 
+def _subpixel_edge_1d_polarity(
+    gray_col: np.ndarray,
+    y: int,
+    search_window: int = 3,
+    edge: str = "any",
+) -> float:
+    """
+    Kenar yönünü dikkate alarak sub-pixel kenar konumu bulur.
+
+    edge:
+      - "top": parlak arka plandan daha koyu parçaya geçiş (negatif gradyan)
+      - "bottom": koyu parçadan parlak arka plana geçiş (pozitif gradyan)
+      - "any": yön farkı gözetmez
+    """
+    h = len(gray_col)
+    if y < search_window + 1 or y >= h - search_window - 2:
+        return float(y)
+
+    grads = []
+    y_vals = list(range(y - search_window, y + search_window + 1))
+    for i in y_vals:
+        g = 0.5 * (float(gray_col[i + 1]) - float(gray_col[i - 1]))
+        grads.append(g)
+
+    if edge == "top":
+        signed = np.array(grads, dtype=float)
+        candidate_mask = signed < 0
+        if np.any(candidate_mask):
+            masked_scores = np.where(candidate_mask, -signed, -np.inf)
+            max_idx = int(np.argmax(masked_scores))
+        else:
+            max_idx = int(np.argmax(np.abs(signed)))
+    elif edge == "bottom":
+        signed = np.array(grads, dtype=float)
+        candidate_mask = signed > 0
+        if np.any(candidate_mask):
+            masked_scores = np.where(candidate_mask, signed, -np.inf)
+            max_idx = int(np.argmax(masked_scores))
+        else:
+            max_idx = int(np.argmax(np.abs(signed)))
+    else:
+        signed = np.array(grads, dtype=float)
+        max_idx = int(np.argmax(np.abs(signed)))
+
+    best_y = y_vals[max_idx]
+    if max_idx == 0 or max_idx == len(grads) - 1:
+        return float(best_y)
+
+    g_minus = signed[max_idx - 1]
+    g_zero = signed[max_idx]
+    g_plus = signed[max_idx + 1]
+
+    denom = g_minus - 2 * g_zero + g_plus
+    if denom == 0:
+        return float(best_y)
+
+    delta = 0.5 * (g_minus - g_plus) / denom
+    delta = max(-1.0, min(1.0, delta))
+    return float(best_y) + delta
+
+
+def _snap_edge_to_support(
+    edge_col: Optional[np.ndarray],
+    coarse_y: int,
+    search_radius: int = 6,
+    prefer: str = "nearest",
+) -> int:
+    """
+    Kaba maske kenarını, gerçek kenar destek haritasındaki en yakın adaya hizalar.
+
+    prefer:
+      - "up": coarse_y'nin üstündeki/en yakın adayı tercih et
+      - "down": coarse_y'nin altındaki/en yakın adayı tercih et
+      - "nearest": mutlak en yakın adayı seç
+    """
+    if edge_col is None or coarse_y < 0:
+        return int(coarse_y)
+
+    edge_idx = np.where(edge_col > 0)[0]
+    if len(edge_idx) == 0:
+        return int(coarse_y)
+
+    nearby = edge_idx[np.abs(edge_idx - coarse_y) <= search_radius]
+    if len(nearby) == 0:
+        return int(coarse_y)
+
+    if prefer == "up":
+        upward = nearby[nearby <= coarse_y]
+        if len(upward) > 0:
+            return int(upward[-1])
+    elif prefer == "down":
+        downward = nearby[nearby >= coarse_y]
+        if len(downward) > 0:
+            return int(downward[0])
+
+    nearest_idx = int(np.argmin(np.abs(nearby - coarse_y)))
+    return int(nearby[nearest_idx])
+
+
 def _remove_outliers(edge_array: List[Optional[float]], window: int = 11, threshold: float = 2.0) -> List[Optional[float]]:
     """
     Komşu piksellere göre çok sapan (outlier) noktaları temizler.
@@ -135,16 +234,16 @@ def edge_stabilize(edge_array: List[Optional[float]]) -> List[Optional[float]]:
     # 1. Ham median filtre (kaba gürültü)
     mask = [x is not None for x in edge_array]
     clean_vals = np.array([x if x is not None else 0 for x in edge_array], dtype=float)
-    med_smoothed = ndimage.median_filter(clean_vals, size=7)
+    med_smoothed = ndimage.median_filter(clean_vals, size=5)
     
     # None'ları geri koy
     stage1 = [float(med_smoothed[i]) if mask[i] else None for i in range(len(edge_array))]
     
     # 2. Outlier Temizliği (medyandan aşırı sapanları buda)
-    stage2 = _remove_outliers(stage1, window=11, threshold=1.5)
+    stage2 = _remove_outliers(stage1, window=9, threshold=1.25)
     
     # 3. Savitzky-Golay (hassas geometrik yumuşatma)
-    stage3 = _savitzky_golay_smooth(stage2, window=15, polyorder=2)
+    stage3 = _savitzky_golay_smooth(stage2, window=9, polyorder=2)
     
     return stage3
 
@@ -259,28 +358,18 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
         # Fallback: Sadece en büyüğü al
         valid_contours = [max(contours, key=cv2.contourArea)]
 
-    # Sadece en büyük konturu ve ona çok yakın olanları birleştir
+    # Metrologi tarafında ölçüm tek fiziksel parçadan alınmalı.
+    # Bu yüzden maskeyi yalnızca ana konturdan üret; ek konturlar
+    # ancak false positive riskini artırıyor.
     main_contour = max(valid_contours, key=cv2.contourArea)
     mask = np.zeros(gray.shape, dtype=np.uint8)
-    
-    # x_start tespiti için sadece ANA konturu kullan (Gürültüye karşı EN SAĞLAM yöntem)
+    cv2.drawContours(mask, [main_contour], -1, 255, cv2.FILLED)
+
+    # x_start/x_end tespiti için sadece ana konturu kullan
     x_c, y_c, w_c, h_c = cv2.boundingRect(main_contour)
     x_start = x_c
-    
-    # Maskeyi tüm geçerli konturlarla doldur (parça parçalanmışsa birleşsin diye)
-    # Ama sadece ana kontura yakın olanları alabiliriz. Şimdilik hepsini çiziyoruz 
-    # çünkü x_start artık sadece ana kontura bağlı.
-    cv2.drawContours(mask, valid_contours, -1, 255, cv2.FILLED)
-
-    # Bounding box'ı maskeye göre güncelle (ama x_start'ı koru)
-    cols_with_data = np.where(np.any(mask > 0, axis=0))[0]
-    rows_with_data = np.where(np.any(mask > 0, axis=1))[0]
-    
-    # x_end'i maskeye göre bul
-    x_end = int(cols_with_data[-1]) + 1
-    y_start = int(rows_with_data[0])
-    y_end = int(rows_with_data[-1]) + 1
-    bbox = (int(x_start), int(y_start), int(x_end - x_start), int(y_end - y_start))
+    x_end = x_c + w_c
+    bbox = (int(x_c), int(y_c), int(w_c), int(h_c))
 
     # ROI Band Sınırlaması (Kullanıcı parametresi)
     # Sadece fiziksel parçanın olması gereken y aralığında kenar ara
@@ -292,22 +381,25 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
     diameter_px: List[float] = []
     center_y_list: List[Optional[float]] = []
 
+    edge_source = binary_edges if is_edge_map and 'binary_edges' in locals() else locals().get("edge_support")
+
     for x in range(x_start, x_end):
         # Kritik: Çapı kalibrasyonla aynı mantıkla ölç.
         # Kalibrasyonda bir kolondaki ilk/son beyaz piksel alınıyor.
         # Ölçümde de aynı yaklaşımı kullanıyoruz; kontur maskesi yalnızca x aralığını
         # belirlemek için kullanılıyor.
-        if is_edge_map and 'binary_edges' in locals():
-            col = binary_edges[:, x]
-        else:
-            col = binary[:, x]
+        col = binary[:, x]
 
         # ROI kısıtı uygula
         white_pixels = np.where((col > 0) & (np.arange(len(col)) >= roi_y_min) & (np.arange(len(col)) <= roi_y_max))[0]
 
-        # Kaynak kolonda veri yoksa birleşik kontur maskesine fallback.
+        # Kaynak kolonda veri yoksa ana kontur maskesine fallback.
         if len(white_pixels) == 0:
-            white_pixels = np.where(mask[:, x] > 0)[0]
+            white_pixels = np.where(
+                (mask[:, x] > 0)
+                & (np.arange(mask.shape[0]) >= roi_y_min)
+                & (np.arange(mask.shape[0]) <= roi_y_max)
+            )[0]
 
         if len(white_pixels) == 0:
             top_edge.append(None)
@@ -318,36 +410,40 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
             top = int(white_pixels[0])
             bottom = int(white_pixels[-1])
 
+            if edge_source is not None:
+                edge_col = edge_source[:, x]
+                top = _snap_edge_to_support(edge_col, top, search_radius=6, prefer="up")
+                bottom = _snap_edge_to_support(edge_col, bottom, search_radius=6, prefer="down")
+
             # Alt-piksel hassasiyeti (Sub-pixel refinement)
-            top_sub = _subpixel_edge_1d(gray[:, x], top)
-            bottom_sub = _subpixel_edge_1d(gray[:, x], bottom)
+            top_sub = _subpixel_edge_1d_polarity(gray[:, x], top, search_window=4, edge="top")
+            bottom_sub = _subpixel_edge_1d_polarity(gray[:, x], bottom, search_window=4, edge="bottom")
 
             top_edge.append(top_sub)
             bottom_edge.append(bottom_sub)
             diameter_px.append(bottom_sub - top_sub)
             center_y_list.append((top_sub + bottom_sub) / 2.0)
 
-    # 5. Profil Stabilizasyonu (Edge Stabilize Layer)
-    # Gürültü ve titremeyi (jitter) önlemek için gelişmiş filtreleme uygulanır
-    top_edge_smoothed = edge_stabilize(top_edge)
-    bottom_edge_smoothed = edge_stabilize(bottom_edge)
-    
-    # Çap ve merkezi pürüzsüzleştirilmiş kenarlara göre yeniden hesapla
-    diameter_px_smoothed = []
-    center_y_smoothed = []
-    for t, b in zip(top_edge_smoothed, bottom_edge_smoothed):
+    # Ölçüm verisi ham/sub-pixel kenar olarak korunur.
+    # Overlay için ayrı, hafifçe stabilize edilmiş bir görünüm üret.
+    top_edge_display = edge_stabilize(top_edge)
+    bottom_edge_display = edge_stabilize(bottom_edge)
+
+    center_y_display = []
+    for t, b in zip(top_edge_display, bottom_edge_display):
         if t is not None and b is not None:
-            diameter_px_smoothed.append(b - t)
-            center_y_smoothed.append((t + b) / 2.0)
+            center_y_display.append((t + b) / 2.0)
         else:
-            diameter_px_smoothed.append(0)
-            center_y_smoothed.append(None)
+            center_y_display.append(None)
 
     return {
-        "top_edge": top_edge_smoothed,
-        "bottom_edge": bottom_edge_smoothed,
-        "diameter_px": diameter_px_smoothed,
-        "center_y": center_y_smoothed,
+        "top_edge": top_edge,
+        "bottom_edge": bottom_edge,
+        "diameter_px": diameter_px,
+        "center_y": center_y_list,
+        "overlay_top_edge": top_edge_display,
+        "overlay_bottom_edge": bottom_edge_display,
+        "overlay_center_y": center_y_display,
         "x_start": x_start,
         "x_end": x_end,
         "contour": main_contour,
@@ -373,34 +469,32 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
     """
     overlay = image.copy()
     x_start = profile["x_start"]
-    top_edge = profile["top_edge"]
-    bottom_edge = profile["bottom_edge"]
+    top_edge = profile.get("overlay_top_edge", profile["top_edge"])
+    bottom_edge = profile.get("overlay_bottom_edge", profile["bottom_edge"])
 
     # Üst ve alt kenar çizgileri (yeşil)
     for i in range(len(top_edge) - 1):
         if top_edge[i] is not None and top_edge[i + 1] is not None:
             cv2.line(overlay,
-                     (x_start + i, int(top_edge[i])),
-                     (x_start + i + 1, int(top_edge[i + 1])),
-                     (0, 255, 0), 1)
+                     (x_start + i, int(round(top_edge[i]))),
+                     (x_start + i + 1, int(round(top_edge[i + 1]))),
+                     (0, 255, 0), 1, cv2.LINE_AA)
         if bottom_edge[i] is not None and bottom_edge[i + 1] is not None:
             cv2.line(overlay,
-                     (x_start + i, int(bottom_edge[i])),
-                     (x_start + i + 1, int(bottom_edge[i + 1])),
-                     (0, 255, 0), 1)
+                     (x_start + i, int(round(bottom_edge[i]))),
+                     (x_start + i + 1, int(round(bottom_edge[i + 1]))),
+                     (0, 255, 0), 1, cv2.LINE_AA)
 
     # Merkez çizgisi (mavi, kesikli)
-    center_y = profile["center_y"]
+    center_y = profile.get("overlay_center_y", profile["center_y"])
     for i in range(0, len(center_y) - 1, 4):
         if center_y[i] is not None and center_y[i + 1] is not None:
             cv2.line(overlay,
-                     (x_start + i, int(center_y[i])),
-                     (x_start + i + 1, int(center_y[i + 1])),
-                     (255, 165, 0), 1)
+                     (x_start + i, int(round(center_y[i]))),
+                     (x_start + i + 1, int(round(center_y[i + 1]))),
+                     (255, 165, 0), 1, cv2.LINE_AA)
 
-    # Bölüm ayraç çizgileri (kesikli gri dikey çizgiler — sadece sınır)
-    # NOT: Çap ölçüm çizgileri artık burada ÇİZİLMEZ. 
-    # Sabit X koordinatlarından çizilen ölçümler app.py tarafından çizilir.
+    # Bölüm ayraç çizgileri (kesikli gri dikey çizgiler) ve bölüm çapları
     if sections is not None:
         for sec in sections:
             sx = sec["x_start_abs"]
@@ -408,6 +502,28 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
             for draw_x in [sx, ex]:
                 for y in range(0, overlay.shape[0], 8):
                     cv2.line(overlay, (draw_x, y), (draw_x, min(y + 4, overlay.shape[0])), (100, 100, 100), 1)
+
+            top_y = sec.get("top_y_at_mid")
+            bottom_y = sec.get("bottom_y_at_mid")
+            if top_y is None or bottom_y is None:
+                continue
+
+            mid_x = int(round((sx + ex) / 2.0))
+            ity = int(round(top_y))
+            iby = int(round(bottom_y))
+            color = (0, 255, 0)
+
+            cv2.line(overlay, (mid_x, ity), (mid_x, iby), color, 2, cv2.LINE_AA)
+            cv2.arrowedLine(overlay, (mid_x, (ity + iby) // 2), (mid_x, ity), color, 2, tipLength=0.06)
+            cv2.arrowedLine(overlay, (mid_x, (ity + iby) // 2), (mid_x, iby), color, 2, tipLength=0.06)
+
+            if sec.get("diameter_mm") is not None:
+                label = f"{float(sec['diameter_mm']):.2f}"
+                text_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                tx = mid_x - text_size[0] // 2
+                ty = max(20, ity - 12)
+                cv2.putText(overlay, label, (tx + 1, ty + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(overlay, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
 
     # Golden feature etiketleri (opsiyonel)
     if matched_features:
@@ -434,7 +550,7 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
                 d_size, _ = cv2.getTextSize(d_label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
                 cv2.putText(
                     overlay, d_label,
-                    (mid_x - d_size[0] // 2, max(0, int(float(top_y)) - 15)),
+                    (mid_x - d_size[0] // 2, max(0, int(round(float(top_y))) - 15)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     (0, 255, 255), 2, cv2.LINE_AA
                 )
@@ -456,8 +572,8 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
     if point_measurements:
         for p in point_measurements:
             px = p["x_abs"]
-            ty = int(p["top_y"])
-            by = int(p["bottom_y"])
+            ty = int(round(p["top_y"]))
+            by = int(round(p["bottom_y"]))
             val = p["diameter_mm"]
             
             color = (255, 100, 0) # Mavi tonu

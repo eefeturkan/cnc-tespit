@@ -39,6 +39,10 @@ class MeasurementResult:
     top_y: Optional[float] = None
     bottom_y: Optional[float] = None
     x_abs: Optional[int] = None  # İnce ayar için ham değer
+    x_mode: Optional[str] = None
+    x_used_abs: Optional[int] = None
+    x_used_rel: Optional[int] = None
+    snap_offset_px: Optional[int] = None
     section_index: Optional[int] = None
 
 
@@ -67,6 +71,88 @@ class FixedMeasurementEngine:
         except Exception as e:
             print(f"Şablon yükleme hatası: {e}")
             return False
+
+    @staticmethod
+    def _find_runs(mask: np.ndarray, start: int, end: int) -> List[Tuple[int, int]]:
+        """[start, end) aralığındaki True segmentlerini döndür."""
+        runs: List[Tuple[int, int]] = []
+        run_start: Optional[int] = None
+        for idx in range(start, end):
+            if mask[idx]:
+                if run_start is None:
+                    run_start = idx
+            elif run_start is not None:
+                runs.append((run_start, idx))
+                run_start = None
+        if run_start is not None:
+            runs.append((run_start, end))
+        return runs
+
+    def _pick_stable_diameter_band(
+        self,
+        diameter_px_arr: np.ndarray,
+        x_rel: int,
+        sample_width_px: int,
+        search_radius_px: int,
+    ) -> Tuple[int, int, int]:
+        """
+        Beklenen X civarında en stabil düz çap bandını seç.
+
+        Returns:
+            (band_start_rel, band_end_rel, used_x_rel)
+        """
+        if len(diameter_px_arr) == 0:
+            return 0, 0, 0
+
+        valid_mask = diameter_px_arr > 0
+        start = max(0, x_rel - search_radius_px)
+        end = min(len(diameter_px_arr), x_rel + search_radius_px + 1)
+        if end <= start:
+            return x_rel, min(len(diameter_px_arr), x_rel + 1), x_rel
+
+        from scipy.ndimage import median_filter
+
+        smooth = median_filter(diameter_px_arr.astype(float), size=3)
+        grad_abs = np.abs(np.gradient(smooth))
+
+        local_grad = grad_abs[start:end][valid_mask[start:end]]
+        base_grad = float(np.median(local_grad)) if len(local_grad) else 0.0
+        stability_threshold = max(0.35, base_grad * 2.5)
+
+        stable_mask = valid_mask & (grad_abs <= stability_threshold)
+        all_runs = self._find_runs(stable_mask, 0, len(diameter_px_arr))
+        runs = [run for run in all_runs if run[1] > start and run[0] < end]
+
+        if not runs:
+            band_start = max(0, x_rel - sample_width_px)
+            band_end = min(len(diameter_px_arr), x_rel + sample_width_px + 1)
+            return band_start, band_end, int(np.clip(x_rel, band_start, max(band_start, band_end - 1)))
+
+        scored_runs = []
+        for run_start, run_end in runs:
+            safe_start = run_start
+            safe_end = run_end
+
+            if (safe_end - safe_start) > (2 * sample_width_px + 1):
+                safe_start += sample_width_px
+                safe_end -= sample_width_px
+
+            if safe_end <= safe_start:
+                safe_start, safe_end = run_start, run_end
+
+            clamped_x = int(np.clip(x_rel, safe_start, max(safe_start, safe_end - 1)))
+            contains = safe_start <= x_rel < safe_end
+            distance = abs(clamped_x - x_rel)
+            span = safe_end - safe_start
+            score = (distance * 2.0) - min(span, 40)
+            scored_runs.append((contains, score, distance, -span, safe_start, safe_end, clamped_x))
+
+        containing_runs = [r for r in scored_runs if r[0]]
+        if containing_runs:
+            _, _, _, _, band_start, band_end, used_x = min(containing_runs, key=lambda r: (r[2], r[3]))
+        else:
+            _, _, _, _, band_start, band_end, used_x = min(scored_runs, key=lambda r: (r[1], r[2], r[3]))
+        return band_start, band_end, used_x
     
     # ─── Çap Ölçüm Metotları ───────────────────────────────────────
     
@@ -202,16 +288,29 @@ class FixedMeasurementEngine:
         x_abs: int,
         profile: Dict,
         y_calibration: float,
-        sample_width_px: int = 3
-    ) -> Tuple[Optional[float], Optional[int], Optional[int], Optional[float], Optional[float]]:
+        sample_width_px: int = 3,
+        x_mode: str = "relative_to_part_start",
+        search_radius_px: int = 24,
+    ) -> Tuple[
+        Optional[float],
+        Optional[int],
+        Optional[int],
+        Optional[float],
+        Optional[float],
+        Optional[int],
+        Optional[int],
+        Optional[int],
+    ]:
         """
-        Görüntü üzerindeki sabit bir X koordinatında çapı ölçer.
+        Sabit bir X konumunda çapı ölçer.
         
         Args:
-            x_abs: Mutlak X koordinatı (piksel)
+            x_abs: Ölçüm konumu (varsayılan olarak parçanın sol ucundan ofset)
             profile: Profil verisi
             y_calibration: Y kalibrasyonu (piksel/mm)
             sample_width_px: Ölçüm yapılacak X etrafındaki örnekleme genişliği
+            x_mode: "relative_to_part_start" veya "absolute_image"
+            search_radius_px: Stabil plato aramak için beklenen X çevresindeki arama yarıçapı
             
         Returns:
             (diameter_mm, x_start_px, x_end_px, top_y, bottom_y)
@@ -220,42 +319,48 @@ class FixedMeasurementEngine:
         top_edge = profile.get('top_edge', [])
         bottom_edge = profile.get('bottom_edge', [])
         x_start_parca = profile.get('x_start', 0)
-        
-        # Bilgi: x_abs artık mutlak görüntü koordinatı değil, 
-        # parçanın sol ucundan (x_start_parca) itibaren olan mesafedir.
-        x_rel = int(x_abs)
+
+        if x_mode == "absolute_image":
+            x_rel = int(x_abs - x_start_parca)
+        else:
+            x_rel = int(x_abs)
         
         if x_rel < 0 or x_rel >= len(diameter_px_arr):
-            return None, None, None, None, None
-            
-        # Parça üzerinde ilgili noktayı örnekle (gürültü azaltma için)
-        sample_start = max(0, x_rel - sample_width_px)
-        sample_end = min(len(diameter_px_arr), x_rel + sample_width_px + 1)
-        
-        segment = diameter_px_arr[sample_start:sample_end]
+            return None, None, None, None, None, None, None, None
+
+        band_start, band_end, used_x_rel = self._pick_stable_diameter_band(
+            diameter_px_arr,
+            x_rel,
+            sample_width_px=sample_width_px,
+            search_radius_px=search_radius_px,
+        )
+
+        segment = diameter_px_arr[band_start:band_end]
         valid = segment[segment > 0]
         
         if len(valid) == 0:
-            # Sadece o noktadaki değeri dene
-            val = diameter_px_arr[x_rel]
+            # Sadece seçilen noktadaki değeri dene
+            val = diameter_px_arr[used_x_rel]
             if val > 0:
                 valid = [val]
             else:
-                return None, None, None, None, None
+                return None, None, None, None, None, None, None, None
         
         median_diameter_px = float(np.median(valid))
         diameter_mm = median_diameter_px / y_calibration
         
         # Overlay için (Mutlak görüntü koordinatları)
-        mid_idx = x_rel
+        mid_idx = used_x_rel
         top_y = top_edge[mid_idx] if mid_idx < len(top_edge) and top_edge[mid_idx] is not None else None
         bot_y = bottom_edge[mid_idx] if mid_idx < len(bottom_edge) and bottom_edge[mid_idx] is not None else None
         
-        # Overlay görüntüsü için mutlak X koordinatları (parça başlangıcı + mesafe)
-        x_px_start = x_start_parca + x_rel - sample_width_px
-        x_px_end = x_start_parca + x_rel + sample_width_px
+        # Overlay görüntüsü için mutlak X koordinatları
+        x_px_start = x_start_parca + band_start
+        x_px_end = x_start_parca + max(band_start, band_end - 1)
+        x_used_abs = x_start_parca + used_x_rel
+        snap_offset_px = used_x_rel - x_rel
         
-        return diameter_mm, x_px_start, x_px_end, top_y, bot_y
+        return diameter_mm, x_px_start, x_px_end, top_y, bot_y, x_used_abs, used_x_rel, snap_offset_px
     
     # ─── Uzunluk Ölçüm Metotları ──────────────────────────────────
     
@@ -306,6 +411,30 @@ class FixedMeasurementEngine:
         
         length_mm = total_px / x_calibration
         return length_mm, x_start_px, x_end_px
+
+    def measure_fixed_length(
+        self,
+        x_start_abs: int,
+        x_end_abs: int,
+        x_calibration: float,
+    ) -> Tuple[Optional[float], Optional[int], Optional[int]]:
+        """
+        Görüntü üzerindeki sabit iki X koordinatı arasındaki uzunluğu ölçer.
+
+        Returns:
+            (length_mm, x_start_px, x_end_px)
+        """
+        if x_calibration <= 0:
+            return None, None, None
+
+        start_px = int(min(x_start_abs, x_end_abs))
+        end_px = int(max(x_start_abs, x_end_abs))
+        total_px = end_px - start_px
+        if total_px <= 0:
+            return None, None, None
+
+        length_mm = total_px / x_calibration
+        return length_mm, start_px, end_px
     
     def measure_total_length(
         self,
@@ -332,7 +461,7 @@ class FixedMeasurementEngine:
         
         first_valid = min(valid_indices)
         last_valid = max(valid_indices)
-        length_px = last_valid - first_valid
+        length_px = (last_valid - first_valid) + 1
         length_mm = length_px / x_calibration
         
         return length_mm, x_start + first_valid, x_start + last_valid
@@ -400,6 +529,9 @@ class FixedMeasurementEngine:
             x_end_px = None
             top_y = None
             bottom_y = None
+            x_used_abs = None
+            x_used_rel = None
+            snap_offset_px = None
             
             # ─── Çap Ölçümleri ───
             if point_type == 'diameter' and method == 'section_center':
@@ -430,13 +562,20 @@ class FixedMeasurementEngine:
                 
             elif point_type == 'diameter' and method == 'fixed_x':
                 x_abs = point.get('x_abs', 0)
+                x_mode = point.get('x_mode', 'relative_to_part_start')
                 sample_width = point.get('sample_width_px', 3)
+                search_radius = point.get('search_radius_px', 24)
                 
-                measured, x_start_px, x_end_px, top_y, bottom_y = \
+                measured, x_start_px, x_end_px, top_y, bottom_y, x_used_abs, x_used_rel, snap_offset_px = \
                     self.measure_diameter_at_fixed_x(
-                        x_abs, profile, y_calibration, sample_width
+                        x_abs, profile, y_calibration, sample_width, x_mode=x_mode, search_radius_px=search_radius
                     )
-                section_info = f"Sabit koordinat x={x_abs}"
+                if x_mode == 'absolute_image':
+                    section_info = f"Görüntü koordinatı x={x_abs}"
+                else:
+                    section_info = f"Parça solundan ofset x={x_abs}"
+                if x_used_abs is not None and snap_offset_px is not None:
+                    section_info += f" | kullanılan x={x_used_abs} (snap {snap_offset_px:+d}px)"
             
             # ─── Uzunluk Ölçümleri ───
             elif point_type == 'length' and method == 'section_length':
@@ -459,6 +598,17 @@ class FixedMeasurementEngine:
                         sections, s_start, s_end, x_calibration
                     )
                 section_info = f"Bölüm {s_start + 1} → {s_end + 1} arası uzunluk"
+
+            elif point_type == 'length' and method == 'fixed_range':
+                range_start = point.get('x_start_abs')
+                range_end = point.get('x_end_abs')
+                if range_start is None or range_end is None:
+                    section_info = "Sabit aralık tanımsız"
+                else:
+                    measured, x_start_px, x_end_px = self.measure_fixed_length(
+                        range_start, range_end, x_calibration
+                    )
+                    section_info = f"Görüntü aralığı x={range_start} → {range_end}"
             
             elif point_type == 'length' and method == 'total_length':
                 measured, x_start_px, x_end_px = \
@@ -500,6 +650,10 @@ class FixedMeasurementEngine:
                 top_y=top_y,
                 bottom_y=bottom_y,
                 x_abs=point.get('x_abs') if method == 'fixed_x' else None,
+                x_mode=point.get('x_mode', 'relative_to_part_start') if method == 'fixed_x' else None,
+                x_used_abs=x_used_abs if method == 'fixed_x' else None,
+                x_used_rel=x_used_rel if method == 'fixed_x' else None,
+                snap_offset_px=snap_offset_px if method == 'fixed_x' else None,
                 section_index=point.get('section_index') if method in ['section_center', 'section_boundary', 'section_length'] else None,
             )
             
@@ -553,6 +707,14 @@ class FixedMeasurementEngine:
             # Add raw parameters for fine-tuning UI
             if result.x_abs is not None:
                 m_data['x_abs'] = result.x_abs
+            if result.x_mode is not None:
+                m_data['x_mode'] = result.x_mode
+            if result.x_used_abs is not None:
+                m_data['x_used_abs'] = result.x_used_abs
+            if result.x_used_rel is not None:
+                m_data['x_used_rel'] = result.x_used_rel
+            if result.snap_offset_px is not None:
+                m_data['snap_offset_px'] = result.snap_offset_px
             if result.section_index is not None:
                 m_data['section_index'] = result.section_index
             

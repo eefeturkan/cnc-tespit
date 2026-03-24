@@ -24,7 +24,12 @@ from calibration import (
     calculate_x_calibration,
     save_profile, load_profile, list_profiles,
 )
-from profile_extractor import extract_profile, draw_profile_overlay
+from profile_extractor import (
+    extract_profile,
+    draw_profile_overlay,
+    _subpixel_edge_1d,
+    _subpixel_edge_1d_polarity,
+)
 from measurement_engine import (
     detect_sections,
     detect_sections_golden,
@@ -34,58 +39,6 @@ from measurement_engine import (
 )
 from report_generator import generate_pdf_report, generate_excel_report
 from fixed_measurement_engine import FixedMeasurementEngine, load_default_template
-
-# ---------------------------------------------------------------------------
-# Sub-pixel Kenar Tespiti Yardımcı Fonksiyonu
-# ---------------------------------------------------------------------------
-def _subpixel_edge_1d(intensity: np.ndarray, coarse: int, search_window: int = 3) -> float:
-    """
-    1D intensity profili üzerinde sub-pixel kenar konumu hesaplar.
-    Parabolik interpolasyon kullanarak piksel-merkezli konumdan daha hassas
-    bir konum belirler.
-    
-    Args:
-        intensity: 1D numpy array (örneğin, bir sütunun gri ton değerleri)
-        coarse: Piksel-merkezli kaba kenar konumu
-        search_window: Piksel cinsinden arama penceresi (varsayılan: 3)
-    
-    Returns:
-        Sub-pixel hassasiyetinde kenar konumu (float)
-    """
-    h = search_window
-    y_min = max(0, coarse - h)
-    y_max = min(len(intensity) - 1, coarse + h)
-    
-    if y_max - y_min < 2:
-        return float(coarse)
-    
-    y_range = np.arange(y_min, y_max + 1)
-    vals = intensity[y_range].astype(np.float32)
-    
-    # Gradient hesapla (merkezi fark)
-    grad = np.zeros_like(vals)
-    grad[1:-1] = vals[2:] - vals[:-2]
-    grad[0] = vals[1] - vals[0]
-    grad[-1] = vals[-1] - vals[-2]
-    
-    # En büyük mutlak gradyanı bul
-    max_idx = np.argmax(np.abs(grad))
-    
-    if max_idx == 0 or max_idx == len(grad) - 1:
-        return float(y_range[max_idx])
-    
-    # Parabolik interpolasyon
-    y0, y1, y2 = y_range[max_idx-1], y_range[max_idx], y_range[max_idx+1]
-    g0, g1, g2 = grad[max_idx-1], grad[max_idx], grad[max_idx+1]
-    
-    denom = g0 - 2*g1 + g2
-    if abs(denom) < 1e-6:
-        return float(y1)
-    
-    delta = (g0 - g2) / (2 * denom)
-    subpixel_pos = y1 + delta
-    
-    return float(subpixel_pos)
 
 # ---------------------------------------------------------------------------
 # Yollar
@@ -526,8 +479,8 @@ async def detect_edges(request: EdgeDetectRequest):
         
         # KRİTİK FIX: Sub-pixel refinement ekle (profile_extractor ile tutarlı)
         # Kenar haritası modunda da orijinal gray üzerinde sub-pixel hesaplama
-        top_y = _subpixel_edge_1d(gray[:, click_x], top_y_raw, search_window=3)
-        bottom_y = _subpixel_edge_1d(gray[:, click_x], bottom_y_raw, search_window=3)
+        top_y = _subpixel_edge_1d_polarity(gray[:, click_x], top_y_raw, search_window=4, edge="top")
+        bottom_y = _subpixel_edge_1d_polarity(gray[:, click_x], bottom_y_raw, search_window=4, edge="bottom")
 
     else:
         # ── Normal Görüntü Modu ──────────────────────────────────────────────
@@ -565,8 +518,8 @@ async def detect_edges(request: EdgeDetectRequest):
         bottom_y_raw = int(white_pixels[-1])
         
         # KRİTİK FIX: Sub-pixel refinement ekle (profile_extractor ile tutarlı)
-        top_y = _subpixel_edge_1d(gray[:, click_x], top_y_raw, search_window=3)
-        bottom_y = _subpixel_edge_1d(gray[:, click_x], bottom_y_raw, search_window=3)
+        top_y = _subpixel_edge_1d_polarity(gray[:, click_x], top_y_raw, search_window=4, edge="top")
+        bottom_y = _subpixel_edge_1d_polarity(gray[:, click_x], bottom_y_raw, search_window=4, edge="bottom")
 
     pixel_distance = bottom_y - top_y
 
@@ -1141,8 +1094,10 @@ async def update_template_point(request: UpdatePointRequest):
             if p.get('code') == request.point_code:
                 if request.new_x_abs is not None:
                     p['x_abs'] = request.new_x_abs
-                    # Açıklamayı da otomatik güncelle (opsiyonel ama tutarlılık için iyi)
-                    if "Sol uçtan x=" in p['description']:
+                    # Açıklamayı otomatik güncelle
+                    if p.get('x_mode') == 'absolute_image':
+                        p['description'] = f"Ölçüm (Görüntü x={request.new_x_abs})"
+                    elif "Sol uçtan x=" in p.get('description', ''):
                         p['description'] = f"Ölçüm (Sol uçtan x={request.new_x_abs})"
                 
                 if request.new_nominal_mm is not None:
@@ -1236,19 +1191,19 @@ async def measure_fixed_points(request: FixedMeasurementRequest):
             bottom_y = m.get('bottom_y')
             
             if m['type'] == 'diameter' and x_start_px is not None and x_end_px is not None:
-                # Sabit X ölçümleri için tam ortayı (istenilen X) bul
-                mid_x = (x_start_px + x_end_px) // 2
+                # Ölçüm motoru stabil bir banda snap etmiş olabilir; varsa gerçek kullanılan X'i çiz.
+                mid_x = int(m.get('x_used_abs') or ((x_start_px + x_end_px) // 2))
                 
                 # Çap çizgisi (dikey ok)
                 if top_y is not None and bottom_y is not None:
-                    ity = int(top_y)
-                    iby = int(bottom_y)
-                    cv2.line(overlay, (mid_x, ity - 5), (mid_x, iby + 5), color, 2)
-                    cv2.arrowedLine(overlay, (mid_x, (ity + iby) // 2), (mid_x, ity - 5), color, 2, tipLength=0.08)
-                    cv2.arrowedLine(overlay, (mid_x, (ity + iby) // 2), (mid_x, iby + 5), color, 2, tipLength=0.08)
+                    ity = int(round(top_y))
+                    iby = int(round(bottom_y))
+                    cv2.line(overlay, (mid_x, ity), (mid_x, iby), color, 2, cv2.LINE_AA)
+                    cv2.arrowedLine(overlay, (mid_x, (ity + iby) // 2), (mid_x, ity), color, 2, tipLength=0.06)
+                    cv2.arrowedLine(overlay, (mid_x, (ity + iby) // 2), (mid_x, iby), color, 2, tipLength=0.06)
                 
                 # Etiket
-                label_y = int(top_y - 20) if top_y is not None else 40
+                label_y = max(24, int(round(top_y)) - 20) if top_y is not None else 40
                 
                 # Arka plan gölgesi
                 cv2.putText(overlay, m['code'], (mid_x - 11, label_y + 1),
