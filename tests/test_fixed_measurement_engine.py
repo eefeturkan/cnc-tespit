@@ -15,6 +15,15 @@ class FixedMeasurementEngineTests(unittest.TestCase):
     def setUp(self):
         self.engine = FixedMeasurementEngine()
 
+    def _set_template(self, measurement_points, settings=None):
+        self.engine.template = {
+            "template_id": "TEST",
+            "description": "test",
+            "measurement_points": measurement_points,
+            "settings": settings or {},
+        }
+        self.engine.measurement_points = measurement_points
+
     def test_fixed_x_supports_absolute_image_coordinates(self):
         profile = {
             "diameter_px": [10.0] * 100,
@@ -29,6 +38,7 @@ class FixedMeasurementEngineTests(unittest.TestCase):
             y_calibration=2.0,
             sample_width_px=0,
             x_mode="relative_to_part_start",
+            search_radius_px=0,
         )
         abs_mode = self.engine.measure_diameter_at_fixed_x(
             70,
@@ -44,6 +54,28 @@ class FixedMeasurementEngineTests(unittest.TestCase):
         self.assertEqual(rel[5], 70)
         self.assertEqual(rel[6], 20)
         self.assertEqual(rel[7], 0)
+
+    def test_fixed_x_with_zero_search_radius_stays_in_local_window(self):
+        profile = {
+            "diameter_px": [10.0] * 100,
+            "top_edge": [20.0] * 100,
+            "bottom_edge": [30.0] * 100,
+            "x_start": 0,
+        }
+
+        measured = self.engine.measure_diameter_at_fixed_x(
+            40,
+            profile,
+            y_calibration=2.0,
+            sample_width_px=3,
+            x_mode="absolute_image",
+            search_radius_px=0,
+        )
+
+        self.assertEqual(measured[1], 37)
+        self.assertEqual(measured[2], 43)
+        self.assertEqual(measured[5], 40)
+        self.assertEqual(measured[7], 0)
 
     def test_fixed_x_snaps_from_transition_into_stable_band(self):
         profile = {
@@ -86,6 +118,79 @@ class FixedMeasurementEngineTests(unittest.TestCase):
 
         self.assertEqual((x_start, x_end), (1392, 1613))
         self.assertAlmostEqual(length_mm, (1613 - 1392) / 20.0, places=4)
+
+    def test_local_y_correction_removes_position_dependent_scale_error(self):
+        profile = {
+            "diameter_px": (
+                [0.0] * 10 +
+                [100.0] * 30 +
+                [0.0] * 10 +
+                [200.0] * 30 +
+                [0.0] * 10 +
+                [300.0] * 30
+            ),
+            "top_edge": [20.0] * 120,
+            "bottom_edge": [40.0] * 120,
+            "x_start": 0,
+        }
+
+        points = [
+            {
+                "code": "03",
+                "type": "diameter",
+                "method": "fixed_x",
+                "x_mode": "absolute_image",
+                "x_abs": 20,
+                "sample_width_px": 1,
+                "search_radius_px": 0,
+                "nominal_mm": 10.0,
+                "lower_tol_mm": -0.1,
+                "upper_tol_mm": 0.1,
+                "description": "d03",
+                "unit": "mm",
+            },
+            {
+                "code": "06",
+                "type": "diameter",
+                "method": "fixed_x",
+                "x_mode": "absolute_image",
+                "x_abs": 55,
+                "sample_width_px": 1,
+                "search_radius_px": 0,
+                "nominal_mm": 19.0,
+                "lower_tol_mm": -0.1,
+                "upper_tol_mm": 0.1,
+                "description": "d06",
+                "unit": "mm",
+            },
+            {
+                "code": "08",
+                "type": "diameter",
+                "method": "fixed_x",
+                "x_mode": "absolute_image",
+                "x_abs": 95,
+                "sample_width_px": 1,
+                "search_radius_px": 0,
+                "nominal_mm": 30.0,
+                "lower_tol_mm": -0.1,
+                "upper_tol_mm": 0.1,
+                "description": "d08",
+                "unit": "mm",
+            },
+        ]
+
+        self._set_template(points, settings={"use_local_y_correction": True})
+        results = self.engine.perform_measurements(
+            profile,
+            sections=[],
+            y_calibration=10.0,
+            x_calibration=10.0,
+        )
+
+        measured = {result.code: result.measured_mm for result in results}
+        self.assertAlmostEqual(measured["03"], 10.0, places=4)
+        self.assertAlmostEqual(measured["06"], 19.0, places=4)
+        self.assertAlmostEqual(measured["08"], 30.0, places=4)
 
 
 if __name__ == "__main__":

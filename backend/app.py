@@ -242,6 +242,22 @@ def _get_active_calibration(image_id: Optional[str] = None) -> CalibrationProfil
     return active_calibration
 
 
+def _get_measurement_calibration(image_id: Optional[str] = None) -> CalibrationProfile:
+    """
+    Ölçüm için kullanılacak kalibrasyon profilini döndür.
+    Şablonda tanımlıysa yerel Y kalibrasyon haritasını bu profile ekler.
+    """
+    base = _get_active_calibration(image_id)
+    cal = CalibrationProfile.from_dict(base.to_dict())
+    try:
+        engine = load_default_template()
+        local_points = engine.template.get("settings", {}).get("local_y_ppmm_points", [])
+        cal.set_local_y_points(local_points)
+    except Exception:
+        pass
+    return cal
+
+
 def _set_active_reference_layout(image_id: str, layout: dict):
     active_reference_layout_by_image[Path(image_id).name] = layout
 
@@ -689,7 +705,7 @@ async def measure_part(request: MeasureRequest):
     Sonucu overlay görüntüsü ve ölçüm tablosu olarak döndür.
     """
     img = _load_image(request.image_id)
-    calibration = _get_active_calibration(request.image_id)
+    calibration = _get_measurement_calibration(request.image_id)
 
     try:
         # 1. Profil çıkar
@@ -784,7 +800,7 @@ async def measure_part(request: MeasureRequest):
 async def extract_part_profile(request: MeasureRequest):
     """Sadece profil çıkar — önizleme + önerilen sınırlar için."""
     img = _load_image(request.image_id)
-    calibration = _get_active_calibration(request.image_id)
+    calibration = _get_measurement_calibration(request.image_id)
 
     try:
         profile = extract_profile(img, {
@@ -834,7 +850,7 @@ async def measure_with_manual_boundaries(request: ManualBoundariesRequest):
     Sınırlar, görüntü koordinatlarındaki mutlak x değerleridir.
     """
     img = _load_image(request.image_id)
-    calibration = _get_active_calibration(request.image_id)
+    calibration = _get_measurement_calibration(request.image_id)
 
     if not request.boundaries:
         raise HTTPException(status_code=400, detail="En az bir sınır noktası gerekli")
@@ -878,7 +894,7 @@ async def measure_at_points(request: ManualPointsRequest):
     Kullanıcının tıkladığı spesifik x koordinatlarında ölçüm yap.
     """
     img = _load_image(request.image_id)
-    calibration = _get_active_calibration(request.image_id)
+    calibration = _get_measurement_calibration(request.image_id)
 
     if not request.points:
         raise HTTPException(status_code=400, detail="En az bir ölçüm noktası gerekli")
@@ -907,7 +923,7 @@ async def measure_at_points(request: ManualPointsRequest):
                 by = bottom_edge[idx]
                 if ty is not None and by is not None:
                     diameter_px = by - ty
-                    diameter_mm = calibration.pixels_to_mm_y(diameter_px)
+                    diameter_mm = calibration.pixels_to_mm_y_at_x(diameter_px, px)
                     
                     point_measurements.append({
                         "id": i + 1,
@@ -957,7 +973,7 @@ async def measure_at_points(request: ManualPointsRequest):
 @app.post("/api/report/pdf")
 async def download_pdf_report(request: ReportRequest):
     """PDF ölçüm raporu oluştur ve indir."""
-    calibration = _get_active_calibration(request.image_id)
+    calibration = _get_measurement_calibration(request.image_id)
     # Overlay görüntüsü oluştur (rapora eklemek için)
     overlay_path = None
     if request.include_image:
@@ -1025,7 +1041,7 @@ async def download_excel_report(request: ReportRequest):
 async def download_processed_image(request: MeasureRequest):
     """İşlenmiş (ölçüm overlay) görüntüyü PNG olarak indir."""
     img = _load_image(request.image_id)
-    calibration = _get_active_calibration(request.image_id)
+    calibration = _get_measurement_calibration(request.image_id)
     try:
         profile = extract_profile(img, {
             "blur_ksize": request.blur_ksize,
@@ -1137,7 +1153,7 @@ async def measure_fixed_points(request: FixedMeasurementRequest):
     4. Her nokta için ölçümü ilgili bölümden al
     """
     img = _load_image(request.image_id)
-    calibration = _get_active_calibration(request.image_id)
+    calibration = _get_measurement_calibration(request.image_id)
     
     if calibration is None:
         raise HTTPException(

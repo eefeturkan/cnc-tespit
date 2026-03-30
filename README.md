@@ -1,89 +1,170 @@
 # CNC Parça Ölçüm Sistemi v3.0
 
-Silindirik CNC açılmış parçaların (örneğin tahrik milleri, bobinler) fotoğrafları üzerinden yüksek hassasiyetle **çap (D)** ve **uzunluk (L)** ölçümleri yapabilen web tabanlı bir görüntü işleme ve ölçüm yazılımıdır. 
+Bu proje, silindirik CNC parçaların fotoğrafları üzerinden çap ve uzunluk ölçümü yapabilen web tabanlı bir görüntü işleme ve ölçüm yazılımıdır. Staj projesi kapsamında, mühendislik ekiplerinin bir parçayı hızlı, tekrarlanabilir ve görsel olarak doğrulanabilir şekilde değerlendirebilmesi hedeflenmiştir.
 
-Proje, VICIVISION benzeri optik ölçüm cihazlarının yazılımsal yeteneklerini standart kameralarla çekilmiş, yüksek çözünürlüklü ve iyi ışıklandırılmış görüntüler üzerinde uygulamayı hedefler.
+Sistem; görüntü işleme, profil çıkarma, X-Y kalibrasyonu, tam ölçüm, sabit noktalarda ölçüm ve raporlama adımlarını tek arayüz üzerinden sunar.
 
-## Özellikler
+## Proje Amacı
 
-### 1. Görüntü İşleme Motoru (Faz 1)
-- 12 farklı görüntü işleme algoritması (Canlı Önizleme ile)
-- *Grayscale, Gaussian Blur, Canny Edge, Sobel Edge, Laplacian Edge, Adaptive Threshold, Otsu Threshold, Morphology, Contour Detection, Hough Lines, CLAHE, Bilateral Filter*
-- Seçilen algoritmanın parametrelerini dinamik değiştirme ve sonucu anında görme (Yan Yana / Tekli Görünüm)
+- Fotoğraf üzerinden CNC parçanın profilini çıkarmak
+- Çap ve uzunluk ölçülerini milimetre cinsinden hesaplamak
+- Ölçüm sonuçlarını çizgilerle görsel üzerinde göstermek
+- PDF ve Excel çıktısı alabilmek
+- Teknik çizimdeki kritik noktalara göre sabit ölçüm yapmak
 
-### 2. Optik Kalibrasyon (Faz 2)
-- İki farklı kalibrasyon yöntemi:
-  - **Dinamik Kenar Tespiti:** Görüntü üzerinde bir noktaya tıklandığında, sistem parçanın üst ve alt kenarlarını (Otsu + Morfolojik işlemler ile) milisaniyeler içinde tespit eder ve piksel cinsinden çapı bulur. Gerçek milimetre değeri girildiğinde `Piksel/mm` oranını hesaplar.
-  - **Manuel Giriş:** Bilinen `Piksel/mm` oranı doğrudan girilebilir.
-- Kalibrasyon profilleri (`.json`) disk üzerinde saklanır ve daha sonra tekrar yüklenebilir.
+## Temel Yetenekler
 
-### 3. Otomatik Ölçüm Motoru (Faz 2)
-- Parçanın silüetini (profilini) çıkararak üst ve alt kenarları tam boyutlu olarak dizilere haritalar.
-- Profilin birinci türevi (gradient) alınarak parçadaki keskin çap değişimleri (basamaklar/bölümler) tespit edilir.
-- Her bölüm için ayrı ayrı ortalama çap ve toplam uzunluk hesaplanır.
-- Sonuçlar, CNC raporlama standartlarına uygun olarak `D01, L01, D02, L02...` formatında tabloya dökülür.
+### 1. Görüntü İşleme
+- 12 farklı görüntü işleme algoritması
+- Parametrelerin arayüzden anlık değiştirilmesi
+- Parçanın arka plandan ayrıştırılması ve profilinin çıkarılması
 
-### 4. Raporlama ve Dışa Aktarım (Faz 3)
-- Ölçüm tamamlandıktan sonra işlenmiş parçanın üzerinde boyutların çizili olduğu görsel PNG olarak indirilebilir.
-- Ölçüm tablosu, kalibrasyon bilgileri ve tolerans dışı durumları (gelecek vizyonu) içeren profesyonel **PDF Raporu** oluşturulur.
-- Diğer sistemlerle entegrasyon veya manuel arşivleme için sonuçlar **Excel (.xlsx)** formatında tek tıkla dışa aktarılabilir.
+### 2. Kalibrasyon
+- Y ekseni için kenar bazlı kalibrasyon
+- X ekseni için uzunluk bazlı kalibrasyon
+- Piksel/mm oranının hesaplanması
+- Kalibrasyon verilerinin saklanabilmesi
+
+### 3. Tam Ölçüm
+- Parça profili çıkarılır
+- Bölümler otomatik tespit edilir
+- Her bölüm için çap ve uzunluk hesaplanır
+- Sonuçlar görsel üzerinde çizgilerle gösterilir
+
+### 4. Sabit Noktalarda Ölçüm
+- Teknik çizimde tanımlı kritik noktalardan ölçüm alınır
+- Özellikle belirli çap ve uzunluk noktalarında daha kontrollü sonuç verir
+- Sunum ve karşılaştırma için en kullanışlı moddur
+
+### 5. Raporlama
+- Ölçüm görselinin dışa aktarılması
+- PDF raporu oluşturulması
+- Excel çıktısı alınması
+
+## Sabit Ölçüm Hakkında Önemli Not
+
+Bu projede en iyi sonuç, ölçüm aşamasında:
+
+`X ve Y kalibrasyonu yapıldıktan sonra`
+
+`SABİT ÖLÇÜM NOKTALARI`
+
+`Teknik çizimdeki 03, 04, 05, 06, 08, 17, 18, 21, 22, 24 noktaları`
+
+`Sabit Noktalarda Ölç`
+
+akışı kullanıldığında alınmaktadır.
+
+Bu yaklaşım özellikle teknik resimde kritik kabul edilen çap ve uzunlukların doğrudan kontrol edilmesi açısından daha uygundur.
+
+## Sentetik Referans Görsel Notu
+
+Klasörde bulunan `sentetikgorsel.jpeg` dosyası, sabit ölçümde kullanılan çap ve uzunluk çizgilerinin yerlerini belirlemek için referans alınmıştır.
+
+Bu nedenle mevcut sabit ölçüm noktaları, bu referans görsele göre ayarlanmıştır.
+
+### Canlıya Alma ve Farklı Görsel ile Test Notu
+
+Sistem farklı bir kamera, farklı bir açı, farklı bir çözünürlük veya farklı bir test görseli ile kullanılacaksa:
+
+1. X ve Y kalibrasyonu yeniden yapılmalıdır.
+2. Sabit çap ve uzunluk noktaları yeniden kontrol edilmelidir.
+3. Gerekirse `backend/fixed_measurement_template.json` içindeki sabit piksel koordinatları yeni görsele göre tekrar ayarlanmalıdır.
+
+Özetle:
+
+`sentetikgorsel.jpeg` referansına göre ayarlanan sabit noktalar, farklı görüntü koşullarında doğrudan doğru sonuç vermeyebilir.`
+
+Canlı kullanıma alınmadan önce bu noktaların yeniden doğrulanması gerekir.
 
 ## Klasör Yapısı
 
-```
+```text
 cnc-tespit/
-├── backend/
-│   ├── app.py                 # FastAPI ana uygulama (Giriş noktası)
-│   ├── image_processing.py    # Görüntü işleme (12 algoritma)
-│   ├── calibration.py         # Kalibrasyon hesaplama ve profil yönetimi
-│   ├── profile_extractor.py   # Parça silüetini ve kenarları çıkaran motor
-│   ├── measurement_engine.py  # Bölümleri bölen ve çap/boy hesaplayan analiz motoru
-│   ├── report_generator.py    # PDF ve Excel rapor oluşturucu
-│   └── requirements.txt       # Python bağımlılıkları
-├── frontend/
-│   ├── index.html             # Ana UI çerçevesi
-│   ├── css/
-│   │   └── style.css          # Industrial Dark Tema
-│   └── js/
-│       └── app.js             # İstemci tarafı mantık ve API istekleri
-├── uploads/                   # Yüklenen ham görüntüler (geçici)
-├── reports/                   # Geçici rapor dosyaları klasörü
-└── calibration_profiles/      # .json formatındaki kalibrasyon kayıtları
+|-- backend/
+|   |-- app.py
+|   |-- image_processing.py
+|   |-- calibration.py
+|   |-- profile_extractor.py
+|   |-- measurement_engine.py
+|   |-- fixed_measurement_engine.py
+|   |-- report_generator.py
+|   `-- requirements.txt
+|-- frontend/
+|   |-- index.html
+|   |-- css/
+|   `-- js/
+|-- calibration_profiles/
+|-- reports/
+|-- uploads/
+|-- tests/
+`-- sentetikgorsel.jpeg
 ```
 
-## Kurulum ve Çalıştırma
+## Kurulum
 
 ### Gereksinimler
 - Python 3.9+
-- Modern bir web tarayıcısı (Chrome, Edge, Firefox, Safari)
+- Modern bir web tarayıcısı
 
 ### Adımlar
 
-1. **Python kütüphanelerini yükleyin:**
-   ```bash
-   cd backend
-   pip install -r requirements.txt
-   pip install reportlab openpyxl  # Raporlama için
-   ```
+1. Bağımlılıkları yükleyin:
 
-2. **Sunucuyu başlatın:**
-   Backend klasörü içerisindeyken `uvicorn` ile FastAPI sunucusunu çalıştırın:
-   ```bash
-   python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
-   ```
+```bash
+cd backend
+pip install -r requirements.txt
+pip install reportlab openpyxl
+```
 
-3. **Arayüze erişin:**
-   Tarayıcınızda `http://localhost:8000` adresine gidin.
+2. Sunucuyu başlatın:
 
-## Kullanım Rehberi
+```bash
+python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+```
 
-1. **Görüntü Yükleme:** Sol alt kısımdaki alana test edilecek CNC parçasının, iyi ışıklandırılmış ve arka plandan net ayrışan bir fotoğrafını yükleyin.
-2. **Kalibrasyon:** Sol menüden *Kalibrasyon* sekmesine geçin. Parçanın bilinen bir çapı varsa, *Otomatik Kenar* modunda o çap hizasında görüntüye bir kez tıklayın. Sistem kenarları çizecektir. İlgili gerçek mm değerini kutuya girip *Kalibre Et* butonuna basın.
-3. **Ölçüm:** Sol menüden *Ölçüm* sekmesine geçin. Algoritma hassasiyeti (bölüm minimum genişliği, geçiş toleransı vb.) için parametreleri ayarlayın. *Tam Ölçüm* butonuna tıklayın.
-4. **Raporlama:** Sağ altta beliren ölçüm sonuç tablosundan *Görsel*, *PDF* veya *Excel* ikonlarına tıklayarak raporlarınızı indirebilirsiniz.
+3. Tarayıcıdan açın:
 
-## Arayüz Tasarımı (Industrial Dark)
-Arayüz, endüstriyel yazılımların karanlık temalarından ilham alınarak, uzun süreli kullanımlarda göz yormayan, kontrastlı (`#0a0e14`, `#111820`), JetBrains Mono ve DM Sans font ailelerinin birleşimiyle kodlanmıştır.
+```text
+http://localhost:8000
+```
+
+## Kullanım Akışı
+
+### 1. Görüntü Yükleme
+Parçanın arka plandan net ayrıldığı, iyi ışıklandırılmış görüntü sisteme yüklenir.
+
+### 2. Kalibrasyon
+Ölçümden önce X ve Y kalibrasyonu yapılır. Bu adım, ölçümlerin mm cinsinden doğru hesaplanabilmesi için zorunludur.
+
+### 3. Profil Çıkarma
+Parçanın üst ve alt sınırları tespit edilir, profil oluşturulur.
+
+### 4. Ölçüm
+İki farklı yaklaşım vardır:
+
+- `Tam Ölçüm`: Sistem tüm bölümleri otomatik tespit eder.
+- `Sabit Noktalarda Ölç`: Teknik resimdeki belirli kontrol noktaları üzerinden ölçüm yapar.
+
+Mühendislik değerlendirmesi için önerilen akış:
+
+`Kalibrasyon -> Sabit Noktalarda Ölç -> Sonuçları teknik resimle karşılaştır`
+
+### 5. Raporlama
+Sonuçlar görsel, PDF ve Excel olarak dışa aktarılabilir.
+
+## Mühendislik Sunumu İçin Öne Çıkan Noktalar
+
+- Sistem yalnızca görsel işleme yapmaz, aynı zamanda teknik resimdeki kritik ölçülere göre kontrol imkanı sunar.
+- Sabit ölçüm yaklaşımı, operatör bağımlılığını azaltır.
+- Referans görsele göre ayarlanmış sabit noktalar sayesinde tekrarlanabilir ölçüm akışı oluşturulmuştur.
+- Farklı kamera veya görüntü koşullarında yeniden kalibrasyon ve nokta doğrulaması gereklidir.
+- Bu yapı, gelecekte gerçek üretim hattına uyarlanabilecek bir temel oluşturur.
+
+## Geliştirme Notu
+
+Bu proje bir staj projesi olarak geliştirilmiştir. Amaç, üretim ve kalite ekiplerinin kullanabileceği optik ölçüm yaklaşımını yazılımsal olarak modellemek ve mühendislik bakış açısıyla uygulanabilir bir prototip ortaya koymaktır.
 
 ---
-*Geliştirme: v3.0 | 2026*
+
+Geliştirme: v3.0 | 2026

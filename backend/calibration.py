@@ -27,7 +27,8 @@ class CalibrationProfile:
     def __init__(self, pixels_per_mm: float = 1.0, reference_diameter_mm: float = 0.0,
                  reference_pixels: float = 0.0, name: str = "default",
                  pixels_per_mm_x: float = None, pixels_per_mm_y: float = None,
-                 x_user_calibrated: bool = False):
+                 x_user_calibrated: bool = False,
+                 local_y_points: Optional[list] = None):
         self.name = name
         self.pixels_per_mm = pixels_per_mm
         self.reference_diameter_mm = reference_diameter_mm
@@ -42,6 +43,7 @@ class CalibrationProfile:
             # Fallback: ASPECT_CORRECTION_FACTOR kullan — kullanıcı henüz kalibre etmedi
             self.pixels_per_mm_x = self.pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
             self._x_user_calibrated = False
+        self.local_y_points = list(local_y_points or [])
 
     def pixels_to_mm(self, pixels: float) -> float:
         """Piksel değerini mm'ye çevir (geriye uyumluluk — Y ekseni)."""
@@ -54,6 +56,34 @@ class CalibrationProfile:
         if self.pixels_per_mm_y <= 0:
             return 0.0
         return pixels / self.pixels_per_mm_y
+
+    def pixels_to_mm_y_at_x(self, pixels: float, x_abs: Optional[float] = None) -> float:
+        """X konumuna göre yerel Y kalibrasyonu uygula; yoksa global Y kullan."""
+        if not self.local_y_points or x_abs is None:
+            return self.pixels_to_mm_y(pixels)
+
+        try:
+            pts = sorted(
+                (
+                    float(p["x_abs"]),
+                    float(p["pixels_per_mm_y"]),
+                )
+                for p in self.local_y_points
+                if p.get("x_abs") is not None and p.get("pixels_per_mm_y") not in (None, 0)
+            )
+        except Exception:
+            return self.pixels_to_mm_y(pixels)
+
+        if not pts:
+            return self.pixels_to_mm_y(pixels)
+
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        import numpy as np
+        local_ppmm = float(np.interp(float(x_abs), xs, ys))
+        if local_ppmm <= 0:
+            return self.pixels_to_mm_y(pixels)
+        return pixels / local_ppmm
 
     def pixels_to_mm_x(self, pixels: float) -> float:
         """X-ekseni (yatay) piksel değerini mm'ye çevir — uzunluk ölçümü için."""
@@ -86,6 +116,10 @@ class CalibrationProfile:
         if not self._x_user_calibrated:
             self.pixels_per_mm_x = pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
 
+    def set_local_y_points(self, points: list):
+        """Yerel Y kalibrasyon noktalarını ayarla."""
+        self.local_y_points = list(points or [])
+
     def to_dict(self) -> dict:
         return {
             "name": self.name,
@@ -95,6 +129,7 @@ class CalibrationProfile:
             "x_user_calibrated": self._x_user_calibrated,
             "reference_diameter_mm": self.reference_diameter_mm,
             "reference_pixels": self.reference_pixels,
+            "local_y_points": self.local_y_points,
         }
 
     @classmethod
@@ -115,6 +150,7 @@ class CalibrationProfile:
             pixels_per_mm_x=ppmm_x,
             pixels_per_mm_y=data.get("pixels_per_mm_y", ppmm),
             x_user_calibrated=x_user_cal,
+            local_y_points=data.get("local_y_points", []),
         )
 
 

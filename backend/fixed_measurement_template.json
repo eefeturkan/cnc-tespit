@@ -127,6 +127,16 @@
     "type": "left_edge",
     "description": "Parçanın sol ucu referans alınır"
   },
+  "settings": {
+    "use_local_y_correction": false,
+    "local_y_ppmm_points": [
+      { "x_abs": 230, "pixels_per_mm_y": 51.5664695715 },
+      { "x_abs": 534, "pixels_per_mm_y": 51.4418223295 },
+      { "x_abs": 790, "pixels_per_mm_y": 51.5590709356 },
+      { "x_abs": 1210, "pixels_per_mm_y": 51.6849383712 },
+      { "x_abs": 2706, "pixels_per_mm_y": 51.5529432254 }
+    ]
+  },
   "notes": {
     "section_detection": "Sistem profil çıkarıp otomatik bölüm tespiti yapar.",
     "center_ratio": "Çap ölçümlerinde seçilen bölgenin medyanı alınır.",

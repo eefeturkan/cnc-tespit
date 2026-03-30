@@ -142,12 +142,11 @@ def detect_sections(profile: Dict, calibration: CalibrationProfile,
         std_diameter_px = float(np.std(valid_diameters))
         width_px = e - s
 
-        # mm'ye çevir — çap Y-ekseni, uzunluk X-ekseni kalibrasyonu kullanır
-        diameter_mm = calibration.pixels_to_mm_y(avg_diameter_px)
-        length_mm = calibration.pixels_to_mm_x(width_px)
-
         # Orta noktadaki üst/alt kenar
         mid_idx = (s + e) // 2
+        # mm'ye çevir — çap Y-ekseni, uzunluk X-ekseni kalibrasyonu kullanır
+        diameter_mm = calibration.pixels_to_mm_y_at_x(avg_diameter_px, x_start + mid_idx)
+        length_mm = calibration.pixels_to_mm_x(width_px)
         top_y_at_mid = top_edge[mid_idx] if mid_idx < len(top_edge) and top_edge[mid_idx] is not None else None
         bot_y_at_mid = bottom_edge[mid_idx] if mid_idx < len(bottom_edge) and bottom_edge[mid_idx] is not None else None
 
@@ -301,7 +300,7 @@ def detect_sections_golden(
             "width_px": width_px,
             "avg_diameter_px": round(avg_d_px, 2),
             "std_diameter_px": round(std_d_px, 2),
-            "diameter_mm": round(calibration.pixels_to_mm_y(avg_d_px), 4) if avg_d_px > 0 else 0.0,
+            "diameter_mm": round(calibration.pixels_to_mm_y_at_x(avg_d_px, x_start_abs + mid_idx), 4) if avg_d_px > 0 else 0.0,
             "length_mm": round(calibration.pixels_to_mm_x(width_px), 4) if width_px > 0 else 0.0,
             "top_y_at_mid": top_y,
             "bottom_y_at_mid": bot_y,
@@ -411,10 +410,9 @@ def compute_sections_from_boundaries(
         avg_diameter_px = float(np.median(valid_diameters))
         std_diameter_px = float(np.std(valid_diameters))
         width_px = e - s
-        diameter_mm = calibration.pixels_to_mm_y(avg_diameter_px)
-        length_mm = calibration.pixels_to_mm_x(width_px)
-
         mid_idx = (s + e) // 2
+        diameter_mm = calibration.pixels_to_mm_y_at_x(avg_diameter_px, x_start + mid_idx)
+        length_mm = calibration.pixels_to_mm_x(width_px)
         top_y_at_mid = (
             top_edge[mid_idx]
             if mid_idx < len(top_edge) and top_edge[mid_idx] is not None

@@ -43,6 +43,7 @@ class MeasurementResult:
     x_used_abs: Optional[int] = None
     x_used_rel: Optional[int] = None
     snap_offset_px: Optional[int] = None
+    raw_diameter_px: Optional[float] = None
     section_index: Optional[int] = None
 
 
@@ -104,6 +105,16 @@ class FixedMeasurementEngine:
         if len(diameter_px_arr) == 0:
             return 0, 0, 0
 
+        # Gerçek "sabit nokta" ölçümünde kullanıcı verilen X çevresindeki küçük
+        # pencerenin ölçülmesini bekliyor. search_radius=0 ise band arama yapma;
+        # yalnızca istenen X ± sample_width aralığını kullan.
+        if search_radius_px <= 0:
+            band_start = max(0, x_rel - sample_width_px)
+            band_end = min(len(diameter_px_arr), x_rel + sample_width_px + 1)
+            if band_end <= band_start:
+                band_end = min(len(diameter_px_arr), band_start + 1)
+            return band_start, band_end, int(np.clip(x_rel, band_start, max(band_start, band_end - 1)))
+
         valid_mask = diameter_px_arr > 0
         start = max(0, x_rel - search_radius_px)
         end = min(len(diameter_px_arr), x_rel + search_radius_px + 1)
@@ -153,6 +164,103 @@ class FixedMeasurementEngine:
         else:
             _, _, _, _, band_start, band_end, used_x = min(scored_runs, key=lambda r: (r[1], r[2], r[3]))
         return band_start, band_end, used_x
+
+    @staticmethod
+    def _evaluate_measurement(
+        measured: float,
+        nominal: float,
+        lower_tol: float,
+        upper_tol: float,
+    ) -> Tuple[str, float, float, float]:
+        deviation = measured - nominal
+        min_limit = nominal + lower_tol
+        max_limit = nominal + upper_tol
+        status = "PASS" if min_limit <= measured <= max_limit else "FAIL"
+        return status, deviation, min_limit, max_limit
+
+    def _apply_local_y_correction(
+        self,
+        results: List[MeasurementResult],
+        y_calibration: float,
+    ) -> None:
+        """
+        Referans sabit çap noktalarından yerel px/mm eğrisi kur.
+
+        Bu yaklaşım sentetik/master referans görsele göre ayarlanmış sabit
+        noktaların, görüntü boyunca tek global Y kalibrasyondan kaynaklanan
+        sistematik sapmasını azaltır.
+        """
+        if y_calibration <= 0:
+            return
+
+        anchors = []
+        for result in results:
+            if result.measurement_type != "diameter" or result.method != "fixed_x":
+                continue
+            if result.x_used_abs is None or result.nominal_mm <= 0:
+                continue
+            raw_diameter_px = result.raw_diameter_px
+            if raw_diameter_px is None or raw_diameter_px <= 0:
+                continue
+            local_ppmm = raw_diameter_px / result.nominal_mm
+            anchors.append((result.x_used_abs, local_ppmm))
+
+        if len(anchors) < 2:
+            return
+
+        anchors.sort(key=lambda item: item[0])
+        xs = np.array([item[0] for item in anchors], dtype=float)
+        ppmm = np.array([item[1] for item in anchors], dtype=float)
+
+        for result in results:
+            if result.measurement_type != "diameter" or result.method != "fixed_x":
+                continue
+            if result.x_used_abs is None or result.raw_diameter_px is None or result.raw_diameter_px <= 0:
+                continue
+
+            local_ppmm = float(np.interp(result.x_used_abs, xs, ppmm))
+            corrected_mm = result.raw_diameter_px / local_ppmm
+
+            result.measured_mm = corrected_mm
+            (
+                result.status,
+                result.deviation_mm,
+                result.min_limit_mm,
+                result.max_limit_mm,
+            ) = self._evaluate_measurement(
+                corrected_mm,
+                result.nominal_mm,
+                result.lower_tol_mm,
+                result.upper_tol_mm,
+            )
+
+            if "local-y" not in result.section_info:
+                result.section_info += f" | local-y={local_ppmm:.4f} px/mm"
+
+    def _template_local_y_ppmm_for_x(self, x_abs: Optional[int]) -> Optional[float]:
+        """Şablondaki yerel Y kalibrasyon haritasından x konumuna göre px/mm döndür."""
+        if x_abs is None:
+            return None
+        settings = self.template.get('settings', {}) if self.template else {}
+        points = settings.get('local_y_ppmm_points', [])
+        try:
+            anchors = sorted(
+                (
+                    float(p["x_abs"]),
+                    float(p["pixels_per_mm_y"]),
+                )
+                for p in points
+                if p.get("x_abs") is not None and p.get("pixels_per_mm_y") not in (None, 0)
+            )
+        except Exception:
+            return None
+
+        if not anchors:
+            return None
+
+        xs = np.array([a[0] for a in anchors], dtype=float)
+        ys = np.array([a[1] for a in anchors], dtype=float)
+        return float(np.interp(float(x_abs), xs, ys))
     
     # ─── Çap Ölçüm Metotları ───────────────────────────────────────
     
@@ -532,6 +640,7 @@ class FixedMeasurementEngine:
             x_used_abs = None
             x_used_rel = None
             snap_offset_px = None
+            local_ppmm = None
             
             # ─── Çap Ölçümleri ───
             if point_type == 'diameter' and method == 'section_center':
@@ -576,6 +685,14 @@ class FixedMeasurementEngine:
                     section_info = f"Parça solundan ofset x={x_abs}"
                 if x_used_abs is not None and snap_offset_px is not None:
                     section_info += f" | kullanılan x={x_used_abs} (snap {snap_offset_px:+d}px)"
+                if measured is not None:
+                    raw_diameter_px = measured * y_calibration
+                    local_ppmm = self._template_local_y_ppmm_for_x(x_used_abs)
+                    if local_ppmm and local_ppmm > 0:
+                        measured = raw_diameter_px / local_ppmm
+                        section_info += f" | local-y={local_ppmm:.4f} px/mm"
+                    else:
+                        local_ppmm = None
             
             # ─── Uzunluk Ölçümleri ───
             elif point_type == 'length' and method == 'section_length':
@@ -617,11 +734,9 @@ class FixedMeasurementEngine:
             
             # ─── Değerlendirme ───
             if measured is not None:
-                status, deviation = self.evaluate_pass_fail(
+                status, deviation, min_limit, max_limit = self._evaluate_measurement(
                     measured, nominal, lower_tol, upper_tol
                 )
-                min_limit = nominal + lower_tol
-                max_limit = nominal + upper_tol
             else:
                 status = "FAIL"
                 deviation = 0.0
@@ -654,11 +769,15 @@ class FixedMeasurementEngine:
                 x_used_abs=x_used_abs if method == 'fixed_x' else None,
                 x_used_rel=x_used_rel if method == 'fixed_x' else None,
                 snap_offset_px=snap_offset_px if method == 'fixed_x' else None,
+                raw_diameter_px=(measured * (local_ppmm if ('local_ppmm' in locals() and local_ppmm) else y_calibration)) if (method == 'fixed_x' and point_type == 'diameter' and measured is not None) else None,
                 section_index=point.get('section_index') if method in ['section_center', 'section_boundary', 'section_length'] else None,
             )
             
             results.append(result)
-        
+
+        if self.template.get('settings', {}).get('use_local_y_correction', False):
+            self._apply_local_y_correction(results, y_calibration)
+
         return results
     
     def generate_report_data(self, results: List[MeasurementResult]) -> Dict:
