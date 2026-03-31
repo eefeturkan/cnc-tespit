@@ -129,12 +129,23 @@
   },
   "settings": {
     "use_local_y_correction": false,
+    "use_local_x_correction": false,
     "local_y_ppmm_points": [
       { "x_abs": 230, "pixels_per_mm_y": 51.5664695715 },
       { "x_abs": 534, "pixels_per_mm_y": 51.4418223295 },
       { "x_abs": 790, "pixels_per_mm_y": 51.5590709356 },
       { "x_abs": 1210, "pixels_per_mm_y": 51.6849383712 },
       { "x_abs": 2706, "pixels_per_mm_y": 51.5529432254 }
+    ],
+    "local_x_ppmm_points": [
+      { "x_abs": 1.5, "pixels_per_mm_x": 53.3736762482 },
+      { "x_abs": 378.5, "pixels_per_mm_x": 53.3736762482 },
+      { "x_abs": 379.5, "pixels_per_mm_x": 56.0000000000 },
+      { "x_abs": 603.5, "pixels_per_mm_x": 56.0000000000 },
+      { "x_abs": 604.5, "pixels_per_mm_x": 54.8979591837 },
+      { "x_abs": 872.5, "pixels_per_mm_x": 54.8979591837 },
+      { "x_abs": 873.5, "pixels_per_mm_x": 54.8571428571 },
+      { "x_abs": 1640.5, "pixels_per_mm_x": 54.8571428571 }
     ]
   },
   "notes": {

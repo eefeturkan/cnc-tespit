@@ -192,6 +192,93 @@ class FixedMeasurementEngineTests(unittest.TestCase):
         self.assertAlmostEqual(measured["06"], 19.0, places=4)
         self.assertAlmostEqual(measured["08"], 30.0, places=4)
 
+    def test_local_x_correction_removes_position_dependent_scale_error(self):
+        profile = {
+            "diameter_px": [10.0] * 2000,
+            "top_edge": [20.0] * 2000,
+            "bottom_edge": [30.0] * 2000,
+            "x_start": 0,
+        }
+
+        points = [
+            {
+                "code": "17",
+                "type": "length",
+                "method": "fixed_range",
+                "x_start_abs": 379,
+                "x_end_abs": 603,
+                "nominal_mm": 4.0,
+                "lower_tol_mm": -0.1,
+                "upper_tol_mm": 0.1,
+                "description": "l17",
+                "unit": "mm",
+            },
+            {
+                "code": "21",
+                "type": "length",
+                "method": "fixed_range",
+                "x_start_abs": 1,
+                "x_end_abs": 1641,
+                "nominal_mm": 30.0,
+                "lower_tol_mm": -0.2,
+                "upper_tol_mm": 0.2,
+                "description": "l21",
+                "unit": "mm",
+            },
+            {
+                "code": "22",
+                "type": "length",
+                "method": "fixed_range",
+                "x_start_abs": 604,
+                "x_end_abs": 1641,
+                "nominal_mm": 18.9,
+                "lower_tol_mm": -0.1,
+                "upper_tol_mm": 0.1,
+                "description": "l22",
+                "unit": "mm",
+            },
+            {
+                "code": "24",
+                "type": "length",
+                "method": "fixed_range",
+                "x_start_abs": 873,
+                "x_end_abs": 1641,
+                "nominal_mm": 14.0,
+                "lower_tol_mm": -0.1,
+                "upper_tol_mm": 0.1,
+                "description": "l24",
+                "unit": "mm",
+            },
+        ]
+
+        settings = {
+            "use_local_x_correction": True,
+            "local_x_ppmm_points": [
+                {"x_abs": 1.5, "pixels_per_mm_x": 53.3736762482},
+                {"x_abs": 378.5, "pixels_per_mm_x": 53.3736762482},
+                {"x_abs": 379.5, "pixels_per_mm_x": 56.0},
+                {"x_abs": 603.5, "pixels_per_mm_x": 56.0},
+                {"x_abs": 604.5, "pixels_per_mm_x": 54.8979591837},
+                {"x_abs": 872.5, "pixels_per_mm_x": 54.8979591837},
+                {"x_abs": 873.5, "pixels_per_mm_x": 54.8571428571},
+                {"x_abs": 1640.5, "pixels_per_mm_x": 54.8571428571},
+            ],
+        }
+
+        self._set_template(points, settings=settings)
+        results = self.engine.perform_measurements(
+            profile,
+            sections=[],
+            y_calibration=10.0,
+            x_calibration=55.5,
+        )
+
+        measured = {result.code: result.measured_mm for result in results}
+        self.assertAlmostEqual(measured["17"], 4.0, places=4)
+        self.assertAlmostEqual(measured["21"], 30.0, places=4)
+        self.assertAlmostEqual(measured["22"], 18.9, places=4)
+        self.assertAlmostEqual(measured["24"], 14.0, places=4)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,7 @@ class MeasurementResult:
     x_used_rel: Optional[int] = None
     snap_offset_px: Optional[int] = None
     raw_diameter_px: Optional[float] = None
+    raw_length_px: Optional[float] = None
     section_index: Optional[int] = None
 
 
@@ -261,6 +262,111 @@ class FixedMeasurementEngine:
         xs = np.array([a[0] for a in anchors], dtype=float)
         ys = np.array([a[1] for a in anchors], dtype=float)
         return float(np.interp(float(x_abs), xs, ys))
+
+    def _template_local_x_anchors(self) -> List[Tuple[float, float]]:
+        settings = self.template.get('settings', {}) if self.template else {}
+        points = settings.get('local_x_ppmm_points', [])
+        try:
+            anchors = sorted(
+                (
+                    float(p["x_abs"]),
+                    float(p["pixels_per_mm_x"]),
+                )
+                for p in points
+                if p.get("x_abs") is not None and p.get("pixels_per_mm_x") not in (None, 0)
+            )
+        except Exception:
+            return []
+        return anchors
+
+    def _template_x_span_to_mm(
+        self,
+        x_start_abs: Optional[int],
+        x_end_abs: Optional[int],
+        x_calibration: float,
+    ) -> Optional[float]:
+        if x_start_abs is None or x_end_abs is None or x_calibration <= 0:
+            return None
+
+        start = float(min(x_start_abs, x_end_abs))
+        end = float(max(x_start_abs, x_end_abs))
+        span_px = end - start
+        if span_px <= 0:
+            return None
+
+        anchors = self._template_local_x_anchors()
+        if not anchors:
+            return span_px / x_calibration
+
+        xs = np.array([a[0] for a in anchors], dtype=float)
+        ys = np.array([a[1] for a in anchors], dtype=float)
+        pixel_left = np.arange(np.floor(start), np.ceil(end), dtype=float)
+        widths = np.minimum(pixel_left + 1.0, end) - np.maximum(pixel_left, start)
+        valid = widths > 0
+        if not np.any(valid):
+            return span_px / x_calibration
+
+        centers = pixel_left[valid] + 0.5
+        local_ppmm = np.interp(centers, xs, ys)
+        if np.any(local_ppmm <= 0):
+            return span_px / x_calibration
+        return float(np.sum(widths[valid] / local_ppmm))
+
+    def _template_local_x_ppmm_for_span(
+        self,
+        x_start_abs: Optional[int],
+        x_end_abs: Optional[int],
+    ) -> Optional[float]:
+        if x_start_abs is None or x_end_abs is None:
+            return None
+        anchors = self._template_local_x_anchors()
+        if not anchors:
+            return None
+        mid_x = (float(x_start_abs) + float(x_end_abs)) / 2.0
+        xs = np.array([a[0] for a in anchors], dtype=float)
+        ys = np.array([a[1] for a in anchors], dtype=float)
+        return float(np.interp(mid_x, xs, ys))
+
+    def _apply_local_x_correction(
+        self,
+        results: List[MeasurementResult],
+        x_calibration: float,
+    ) -> None:
+        if x_calibration <= 0:
+            return
+
+        for result in results:
+            if result.measurement_type != "length":
+                continue
+            if result.x_pixel_start is None or result.x_pixel_end is None:
+                continue
+            corrected_mm = self._template_x_span_to_mm(
+                result.x_pixel_start,
+                result.x_pixel_end,
+                x_calibration,
+            )
+            if corrected_mm is None:
+                continue
+
+            result.measured_mm = corrected_mm
+            (
+                result.status,
+                result.deviation_mm,
+                result.min_limit_mm,
+                result.max_limit_mm,
+            ) = self._evaluate_measurement(
+                corrected_mm,
+                result.nominal_mm,
+                result.lower_tol_mm,
+                result.upper_tol_mm,
+            )
+
+            local_ppmm = self._template_local_x_ppmm_for_span(
+                result.x_pixel_start,
+                result.x_pixel_end,
+            )
+            if local_ppmm and "local-x" not in result.section_info:
+                result.section_info += f" | local-x~{local_ppmm:.4f} px/mm"
     
     # ─── Çap Ölçüm Metotları ───────────────────────────────────────
     
@@ -641,6 +747,7 @@ class FixedMeasurementEngine:
             x_used_rel = None
             snap_offset_px = None
             local_ppmm = None
+            raw_length_px = None
             
             # ─── Çap Ölçümleri ───
             if point_type == 'diameter' and method == 'section_center':
@@ -734,6 +841,8 @@ class FixedMeasurementEngine:
             
             # ─── Değerlendirme ───
             if measured is not None:
+                if point_type == 'length' and x_start_px is not None and x_end_px is not None:
+                    raw_length_px = float(abs(x_end_px - x_start_px))
                 status, deviation, min_limit, max_limit = self._evaluate_measurement(
                     measured, nominal, lower_tol, upper_tol
                 )
@@ -770,6 +879,7 @@ class FixedMeasurementEngine:
                 x_used_rel=x_used_rel if method == 'fixed_x' else None,
                 snap_offset_px=snap_offset_px if method == 'fixed_x' else None,
                 raw_diameter_px=(measured * (local_ppmm if ('local_ppmm' in locals() and local_ppmm) else y_calibration)) if (method == 'fixed_x' and point_type == 'diameter' and measured is not None) else None,
+                raw_length_px=raw_length_px,
                 section_index=point.get('section_index') if method in ['section_center', 'section_boundary', 'section_length'] else None,
             )
             
@@ -777,6 +887,8 @@ class FixedMeasurementEngine:
 
         if self.template.get('settings', {}).get('use_local_y_correction', False):
             self._apply_local_y_correction(results, y_calibration)
+        if self.template.get('settings', {}).get('use_local_x_correction', False):
+            self._apply_local_x_correction(results, x_calibration)
 
         return results
     

@@ -267,6 +267,11 @@ def _get_measurement_calibration(image_id: Optional[str] = None) -> CalibrationP
         engine = load_default_template()
         local_points = engine.template.get("settings", {}).get("local_y_ppmm_points", [])
         cal.set_local_y_points(local_points)
+        if engine.template.get("settings", {}).get("use_local_x_correction", False):
+            local_x_points = engine.template.get("settings", {}).get("local_x_ppmm_points", [])
+            cal.set_local_x_points(local_x_points)
+        else:
+            cal.set_local_x_points([])
     except Exception:
         pass
     return cal
