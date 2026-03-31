@@ -37,7 +37,12 @@ from measurement_engine import (
     generate_measurement_table,
     get_measurement_summary,
 )
-from report_generator import generate_pdf_report, generate_excel_report
+from report_generator import (
+    generate_pdf_report,
+    generate_excel_report,
+    generate_fixed_pdf_report,
+    generate_fixed_excel_report,
+)
 from fixed_measurement_engine import FixedMeasurementEngine, load_default_template
 
 # ---------------------------------------------------------------------------
@@ -185,6 +190,15 @@ class ReportRequest(BaseModel):
     blur_ksize: int = 5
     morph_ksize: int = 5
     min_contour_area: int = 5000
+
+
+class FixedReportRequest(BaseModel):
+    image_id: str
+    measurements: List[dict]
+    summary: dict
+    template_id: Optional[str] = None
+    description: Optional[str] = None
+    overlay_image: Optional[str] = None
 
 
 class ROIRequest(BaseModel):
@@ -1030,6 +1044,66 @@ async def download_excel_report(request: ReportRequest):
     from fastapi.responses import Response
     from datetime import datetime
     filename = f"olcum_raporu_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/api/report/fixed/pdf")
+async def download_fixed_pdf_report(request: FixedReportRequest):
+    """Sabit ölçüm sonuçları için PDF raporu oluştur ve indir."""
+    calibration = _get_measurement_calibration(request.image_id)
+    overlay_path = None
+
+    if request.overlay_image and request.overlay_image.startswith("data:image"):
+        try:
+            header, encoded = request.overlay_image.split(",", 1)
+            image_bytes = base64.b64decode(encoded)
+            overlay_path = str(REPORTS_DIR / f"fixed_overlay_{uuid.uuid4().hex}.png")
+            with open(overlay_path, "wb") as f:
+                f.write(image_bytes)
+        except Exception:
+            overlay_path = None
+
+    pdf_bytes = generate_fixed_pdf_report(
+        measurements=request.measurements,
+        summary=request.summary,
+        calibration_info=calibration.to_dict(),
+        template_id=request.template_id or "",
+        description=request.description or "",
+        image_path=overlay_path,
+    )
+
+    if overlay_path and os.path.exists(overlay_path):
+        os.remove(overlay_path)
+
+    from fastapi.responses import Response
+    from datetime import datetime
+    filename = f"sabit_olcum_raporu_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/api/report/fixed/excel")
+async def download_fixed_excel_report(request: FixedReportRequest):
+    """Sabit ölçüm sonuçları için Excel raporu oluştur ve indir."""
+    calibration = _get_measurement_calibration(request.image_id)
+    excel_bytes = generate_fixed_excel_report(
+        measurements=request.measurements,
+        summary=request.summary,
+        calibration_info=calibration.to_dict(),
+        template_id=request.template_id or "",
+        description=request.description or "",
+    )
+
+    from fastapi.responses import Response
+    from datetime import datetime
+    filename = f"sabit_olcum_raporu_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return Response(
         content=excel_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -437,3 +437,255 @@ def generate_excel_report(
             f.write(excel_bytes)
 
     return excel_bytes
+
+
+def generate_fixed_pdf_report(
+    measurements: List[Dict],
+    summary: Dict,
+    calibration_info: Dict,
+    template_id: str = "",
+    description: str = "",
+    image_path: Optional[str] = None,
+    output_path: Optional[str] = None,
+) -> bytes:
+    """Sabit ölçüm sonuçları için daha profesyonel PDF raporu üret."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=12 * mm, rightMargin=12 * mm,
+        topMargin=18 * mm, bottomMargin=16 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "FixedTitle", parent=styles["Title"],
+        fontSize=18, textColor=DARK_BG, fontName=BOLD_FONT,
+        spaceAfter=2 * mm, alignment=TA_LEFT
+    )
+    meta_style = ParagraphStyle(
+        "FixedMeta", parent=styles["Normal"],
+        fontSize=9, textColor=TEXT_SECONDARY, fontName=DEFAULT_FONT,
+        spaceAfter=4 * mm, alignment=TA_LEFT
+    )
+    section_style = ParagraphStyle(
+        "FixedSection", parent=styles["Heading2"],
+        fontSize=11, textColor=HEADER_BG, fontName=BOLD_FONT,
+        spaceBefore=5 * mm, spaceAfter=3 * mm, alignment=TA_LEFT
+    )
+
+    elements = []
+    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+    elements.append(Paragraph("CNC Sabit Ölçüm Raporu", title_style))
+    subtitle = f"Template: {template_id or '-'} | Oluşturulma: {now}"
+    if description:
+        subtitle += f" | {description}"
+    elements.append(Paragraph(subtitle, meta_style))
+
+    pass_count = int(summary.get("pass", 0))
+    fail_count = int(summary.get("fail", 0))
+    pass_rate = float(summary.get("pass_rate", 0.0))
+    summary_table = Table(
+        [
+            ["Özet", "Değer", "Kalibrasyon", "Değer"],
+            ["PASS", str(pass_count), "Y px/mm", f"{calibration_info.get('pixels_per_mm', 0):.4f}"],
+            ["FAIL", str(fail_count), "X px/mm", f"{calibration_info.get('pixels_per_mm_x', calibration_info.get('pixels_per_mm', 0)):.4f}"],
+            ["Başarı Oranı", f"%{pass_rate:.1f}", "Profil", calibration_info.get("name", "default")],
+        ],
+        colWidths=[28 * mm, 28 * mm, 35 * mm, 35 * mm],
+    )
+    summary_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), HEADER_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), white),
+        ("FONTNAME", (0, 0), (-1, 0), BOLD_FONT),
+        ("FONTNAME", (0, 1), (-1, -1), DEFAULT_FONT),
+        ("GRID", (0, 0), (-1, -1), 0.4, BORDER_COLOR),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    elements.append(summary_table)
+
+    if image_path and os.path.exists(image_path):
+        elements.append(Spacer(1, 5 * mm))
+        elements.append(Paragraph("Ölçüm Görseli", section_style))
+        try:
+            img = RLImage(image_path)
+            max_w = 175 * mm
+            ratio = img.imageWidth / img.imageHeight
+            img.drawWidth = max_w
+            img.drawHeight = max_w / ratio
+            if img.drawHeight > 110 * mm:
+                img.drawHeight = 110 * mm
+                img.drawWidth = img.drawHeight * ratio
+            elements.append(img)
+        except Exception:
+            pass
+
+    elements.append(Spacer(1, 5 * mm))
+    elements.append(Paragraph("Sabit Ölçüm Sonuçları", section_style))
+
+    table_data = [[
+        "Kod", "Tip", "Açıklama", "Nominal", "Ölçülen", "Sapma",
+        "Alt Tol", "Üst Tol", "Durum"
+    ]]
+
+    badge_styles = []
+    for idx, m in enumerate(measurements, start=1):
+        row = [
+            str(m.get("code", "")),
+            "Çap" if m.get("type") == "diameter" else "Uzunluk",
+            str(m.get("description", "")),
+            str(m.get("nominal", "")),
+            str(m.get("measured", "")),
+            str(m.get("deviation", "")),
+            str(m.get("lower_tol", "")),
+            str(m.get("upper_tol", "")),
+            str(m.get("status", "")),
+        ]
+        table_data.append(row)
+        if m.get("status") == "PASS":
+            badge_styles.extend([
+                ("BACKGROUND", (8, idx), (8, idx), SUCCESS),
+                ("TEXTCOLOR", (8, idx), (8, idx), white),
+                ("FONTNAME", (8, idx), (8, idx), BOLD_FONT),
+            ])
+        elif m.get("status") == "FAIL":
+            badge_styles.extend([
+                ("BACKGROUND", (8, idx), (8, idx), DANGER),
+                ("TEXTCOLOR", (8, idx), (8, idx), white),
+                ("FONTNAME", (8, idx), (8, idx), BOLD_FONT),
+            ])
+
+    result_table = Table(
+        table_data,
+        repeatRows=1,
+        colWidths=[10 * mm, 18 * mm, 48 * mm, 18 * mm, 18 * mm, 18 * mm, 16 * mm, 16 * mm, 16 * mm],
+    )
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), HEADER_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), white),
+        ("FONTNAME", (0, 0), (-1, 0), BOLD_FONT),
+        ("FONTNAME", (0, 1), (-1, -1), DEFAULT_FONT),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.35, BORDER_COLOR),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (1, -1), "CENTER"),
+        ("ALIGN", (3, 1), (8, -1), "CENTER"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]
+    for i in range(1, len(table_data)):
+        if i % 2 == 0:
+            style_cmds.append(("BACKGROUND", (0, i), (7, i), ROW_ALT))
+    style_cmds.extend(badge_styles)
+    result_table.setStyle(TableStyle(style_cmds))
+    elements.append(result_table)
+
+    doc.build(elements, onFirstPage=create_report_canvas, onLaterPages=create_report_canvas)
+    pdf_bytes = buf.getvalue()
+    if output_path:
+        with open(output_path, "wb") as f:
+            f.write(pdf_bytes)
+    return pdf_bytes
+
+
+def generate_fixed_excel_report(
+    measurements: List[Dict],
+    summary: Dict,
+    calibration_info: Dict,
+    template_id: str = "",
+    description: str = "",
+    output_path: Optional[str] = None,
+) -> bytes:
+    """Sabit ölçüm sonuçları için profesyonel Excel raporu üret."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sabit Ölçüm"
+
+    title_font = Font(name="Calibri", bold=True, size=16, color="1E3A8A")
+    sub_font = Font(name="Calibri", size=10, color="475569")
+    header_font = Font(name="Calibri", bold=True, size=10, color="FFFFFF")
+    header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    pass_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    fail_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    border_thin = Border(
+        left=Side(style="thin", color="CBD5E1"),
+        right=Side(style="thin", color="CBD5E1"),
+        top=Side(style="thin", color="CBD5E1"),
+        bottom=Side(style="thin", color="CBD5E1"),
+    )
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+    right = Alignment(horizontal="right", vertical="center")
+
+    ws.merge_cells("A1:I1")
+    ws["A1"] = "CNC Sabit Ölçüm Raporu"
+    ws["A1"].font = title_font
+    ws["A1"].alignment = left
+
+    ws.merge_cells("A2:I2")
+    ws["A2"] = f"Template: {template_id or '-'} | {description or '-'} | Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    ws["A2"].font = sub_font
+    ws["A2"].alignment = left
+
+    meta_rows = [
+        ("PASS", summary.get("pass", 0), "Y px/mm", round(calibration_info.get("pixels_per_mm", 0), 4)),
+        ("FAIL", summary.get("fail", 0), "X px/mm", round(calibration_info.get("pixels_per_mm_x", calibration_info.get("pixels_per_mm", 0)), 4)),
+        ("Başarı Oranı", f"%{float(summary.get('pass_rate', 0.0)):.1f}", "Profil", calibration_info.get("name", "default")),
+    ]
+    row = 4
+    for left_label, left_val, right_label, right_val in meta_rows:
+        ws.cell(row=row, column=1, value=left_label).font = Font(bold=True)
+        ws.cell(row=row, column=2, value=left_val)
+        ws.cell(row=row, column=4, value=right_label).font = Font(bold=True)
+        ws.cell(row=row, column=5, value=right_val)
+        row += 1
+
+    row += 1
+    headers = ["Kod", "Tip", "Açıklama", "Nominal", "Ölçülen", "Sapma", "Alt Tol", "Üst Tol", "Durum"]
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=row, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = border_thin
+
+    for m in measurements:
+        row += 1
+        values = [
+            m.get("code", ""),
+            "Çap" if m.get("type") == "diameter" else "Uzunluk",
+            m.get("description", ""),
+            m.get("nominal", ""),
+            m.get("measured", ""),
+            m.get("deviation", ""),
+            m.get("lower_tol", ""),
+            m.get("upper_tol", ""),
+            m.get("status", ""),
+        ]
+        for col, value in enumerate(values, start=1):
+            cell = ws.cell(row=row, column=col, value=value)
+            cell.border = border_thin
+            cell.alignment = left if col == 3 else center
+        status_cell = ws.cell(row=row, column=9)
+        if m.get("status") == "PASS":
+            status_cell.fill = pass_fill
+        elif m.get("status") == "FAIL":
+            status_cell.fill = fail_fill
+
+    widths = {"A": 8, "B": 12, "C": 42, "D": 12, "E": 12, "F": 12, "G": 12, "H": 12, "I": 10}
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+
+    ws.freeze_panes = "A8"
+    ws.auto_filter.ref = f"A7:I{row}"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    excel_bytes = buf.getvalue()
+    if output_path:
+        with open(output_path, "wb") as f:
+            f.write(excel_bytes)
+    return excel_bytes

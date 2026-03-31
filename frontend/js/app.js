@@ -25,6 +25,7 @@ const state = {
     // Measurement
     lastMeasurementTable: null,
     lastSummary: null,
+    lastFixedMeasurementData: null,
     measureMode: 'auto', // 'auto' | 'golden'
     measureParams: {
         min_section_width_px: 20, gradient_threshold: 2.0,
@@ -115,6 +116,8 @@ function cacheDom() {
     DOM.btnDownloadPdf = document.getElementById('btn-download-pdf');
     DOM.btnDownloadExcel = document.getElementById('btn-download-excel');
     DOM.btnFixedMeasure = document.getElementById('btn-fixed-measure');
+    DOM.btnDownloadFixedPdf = document.getElementById('btn-download-fixed-pdf');
+    DOM.btnDownloadFixedExcel = document.getElementById('btn-download-fixed-excel');
     // Measurement mode
     DOM.btnMeasureModeAuto = document.getElementById('btn-measure-mode-auto');
     DOM.btnMeasureModeGolden = document.getElementById('btn-measure-mode-golden');
@@ -2028,6 +2031,8 @@ function displayFixedMeasurementResults(data) {
     const summary = document.getElementById('fixed-measure-summary');
     
     if (!tbody || !panel) return;
+
+    state.lastFixedMeasurementData = data;
     
     // Paneli göster
     panel.classList.remove('hidden');
@@ -2102,6 +2107,52 @@ function displayFixedMeasurementResults(data) {
     }
 }
 
+async function downloadFixedPdfReport() {
+    if (!state.imageId || !state.lastFixedMeasurementData) {
+        showToast('Önce sabit ölçüm yapın', 'warning');
+        return;
+    }
+    showLoading(true);
+    try {
+        await API.download('/api/report/fixed/pdf', {
+            image_id: state.processedImageId || state.imageId,
+            measurements: state.lastFixedMeasurementData.measurements,
+            summary: state.lastFixedMeasurementData.summary,
+            template_id: state.lastFixedMeasurementData.template_id,
+            description: state.lastFixedMeasurementData.description,
+            overlay_image: state.lastFixedMeasurementData.overlay_image,
+        }, 'sabit_olcum_raporu.pdf');
+        showToast('Sabit ölçüm PDF raporu indirildi', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function downloadFixedExcelReport() {
+    if (!state.imageId || !state.lastFixedMeasurementData) {
+        showToast('Önce sabit ölçüm yapın', 'warning');
+        return;
+    }
+    showLoading(true);
+    try {
+        await API.download('/api/report/fixed/excel', {
+            image_id: state.processedImageId || state.imageId,
+            measurements: state.lastFixedMeasurementData.measurements,
+            summary: state.lastFixedMeasurementData.summary,
+            template_id: state.lastFixedMeasurementData.template_id,
+            description: state.lastFixedMeasurementData.description,
+            overlay_image: state.lastFixedMeasurementData.overlay_image,
+        }, 'sabit_olcum_raporu.xlsx');
+        showToast('Sabit ölçüm Excel raporu indirildi', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        showLoading(false);
+    }
+}
+
 /**
  * Ölçüm tipi etiketi döndürür
  */
@@ -2140,7 +2191,18 @@ function setupFixedMeasurement() {
             performFixedMeasurement();
         });
     }
+
+    if (DOM.btnDownloadFixedPdf) {
+        DOM.btnDownloadFixedPdf.addEventListener('click', downloadFixedPdfReport);
+    }
+
+    if (DOM.btnDownloadFixedExcel) {
+        DOM.btnDownloadFixedExcel.addEventListener('click', downloadFixedExcelReport);
+    }
 }
+
+window.downloadFixedPdfReport = downloadFixedPdfReport;
+window.downloadFixedExcelReport = downloadFixedExcelReport;
 
 // Sabit ölçüm butonu event listener'ı (Eski listener kaldırıldı, init içindeki setupFixedMeasurement kullanılıyor)
 // Uygulama başlatma
